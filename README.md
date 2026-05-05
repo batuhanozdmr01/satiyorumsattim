@@ -1,0 +1,2 @@
+# satiyorumsattim
+satıyorumsattım
