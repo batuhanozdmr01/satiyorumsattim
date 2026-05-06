@@ -260,12 +260,12 @@
     </div>
 
     <div id="modal-profile" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center z-[100] p-4 backdrop-blur-sm">
-        <div class="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+        <div class="bg-white rounded-3xl w-full max-w-3xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
             <div class="p-6 border-b flex items-center justify-between">
                 <h2 class="text-2xl font-black text-orange-600">Profilim</h2>
                 <button onclick="toggleModal('modal-profile')" class="text-gray-400 hover:text-orange-600"><i class="fa-solid fa-xmark text-2xl"></i></button>
             </div>
-            <div id="profile-content" class="p-6 overflow-y-auto custom-scrollbar"></div>
+            <div id="profile-content" class="p-4 sm:p-6 overflow-y-auto custom-scrollbar"></div>
         </div>
     </div>
 
@@ -309,8 +309,9 @@
                 <div id="user-profile-content">
                     <p class="text-center text-sm text-gray-400 py-10">Profil yükleniyor...</p>
                 </div>
-                <div class="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div class="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
                     <button onclick="startUserActionChat()" class="w-full bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl text-sm font-black"><i class="fa-solid fa-message mr-2"></i>Sohbet Et</button>
+                    <button id="user-block-button" onclick="toggleUserBlock()" class="w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl text-sm font-black"><i class="fa-solid fa-user-slash mr-2"></i>Engelle</button>
                     <button onclick="toggleUserReportBox()" class="w-full bg-red-50 hover:bg-red-100 text-red-600 py-3 rounded-xl text-sm font-black"><i class="fa-solid fa-flag mr-2"></i>Şikayet Et</button>
                 </div>
                 <div id="user-report-box" class="hidden bg-red-50 border border-red-100 rounded-2xl p-3">
@@ -517,15 +518,6 @@
                 { name: "Yapı Market ve El Aletleri", maxPrice: 50000, icon: "fa-hammer" },
                 { name: "Diğer", maxPrice: 100000, icon: "fa-house" }
             ],
-            "Koleksiyon ve Sanat": [
-                { name: "Antika Eşyalar", maxPrice: 1000000, icon: "fa-gem" },
-                { name: "Eski Paralar ve Pullar", maxPrice: 500000, icon: "fa-coins" },
-                { name: "Tablo, Heykel ve Özgün Tasarımlar", maxPrice: 2000000, icon: "fa-palette" },
-                { name: "Plak, Kaset ve CD’ler", maxPrice: 50000, icon: "fa-compact-disc" },
-                { name: "İmzalı Hatıra Eşyaları", maxPrice: 500000, icon: "fa-signature" },
-                { name: "Nadir Kitaplar ve Dergiler", maxPrice: 100000, icon: "fa-book" },
-                { name: "Diğer", maxPrice: 1000000, icon: "fa-masks-theater" }
-            ],
             "Hobi, Oyun ve Eğlence": [
                 { name: "Müzik Enstrümanları", maxPrice: 200000, icon: "fa-guitar" },
                 { name: "Figür, Lego ve Model Araçlar", maxPrice: 50000, icon: "fa-robot" },
@@ -547,6 +539,7 @@
         let activePrivateRecipientId = null;
         let activeUserActionId = null;
         let activeUserActionName = '';
+        let activeUserActionBlocked = false;
         let activeDetailImageIndex = 0;
         let detailTouchStartX = 0;
         let advancedFilters = { minPrice: null, maxPrice: null, location: '' };
@@ -846,9 +839,11 @@
             products.forEach(p => {
                 let statusBadge = `<div class="absolute top-2 right-2 ${p.status === 'active' ? 'bg-green-600' : 'bg-orange-600'} text-white text-[8px] font-bold px-2 py-1 rounded-full z-10 uppercase">${p.statusLabel || p.status}</div>`;
                 const participantsHtml = renderParticipants(p);
+                const trustLabel = p.owner_trust && p.owner_trust.label ? p.owner_trust.label : '';
                 container.insertAdjacentHTML('beforeend', `
                     <div onclick="showDetails(${p.id})" class="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all border border-gray-100 overflow-hidden cursor-pointer relative group">
                         ${statusBadge}
+                        ${p.isFeatured ? '<div class="absolute top-20 left-2 z-10 bg-indigo-900 text-white px-2 py-1 rounded-lg text-[9px] font-black shadow"><i class="fa-solid fa-star mr-1"></i>Öne çıkan</div>' : ''}
                         ${appState.isAuthenticated ? `<button onclick="toggleFavorite(event, ${p.id})" class="absolute top-11 right-2 z-10 ${p.isFavorite ? 'bg-red-500 text-white' : 'bg-white/90 text-gray-500'} hover:bg-red-500 hover:text-white w-9 h-9 rounded-full shadow transition" title="Favori"><i class="fa-solid fa-heart"></i></button>` : ''}
                         <div class="absolute top-2 left-2 z-10 bg-black/70 text-white px-2 py-1 rounded-lg text-[10px] font-bold">
                             <span class="timer-display" data-id="${p.id}" data-endtime="${p.endTime}">
@@ -859,6 +854,7 @@
                         <img src="${p.img}" class="w-full h-40 object-cover group-hover:scale-105 transition">
                         <div class="p-4">
                             <h3 class="font-bold text-sm truncate text-gray-700">${p.title}</h3>
+                            ${trustLabel ? `<p class="mt-1 inline-flex items-center gap-1 bg-green-50 text-green-700 border border-green-100 px-2 py-0.5 rounded-full text-[9px] font-black"><i class="fa-solid fa-shield-halved"></i> Güven: ${escapeHtml(trustLabel)}</p>` : ''}
                             <div class="flex items-center justify-between mt-2 text-[10px] font-bold text-gray-400">
                                 <span><i class="fa-solid fa-location-dot mr-1"></i>${escapeHtml(p.location || 'Konum yok')}</span>
                                 <span><i class="fa-solid fa-eye mr-1"></i>${p.viewCount || 0}</span>
@@ -899,14 +895,15 @@
                         <p class="text-xs font-black text-gray-400 uppercase mb-2">Teklif Geçmişi</p>
                         <div class="space-y-2 max-h-40 overflow-y-auto pr-2 custom-scrollbar">
                             ${bids.map(b => `
-                                <div class="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100">
+                                <div class="flex justify-between items-center bg-gray-50 p-3 rounded-xl border border-gray-100 ${b.is_active ? '' : 'opacity-50'}">
                                     <div>
-                                        <p class="text-xs font-bold text-gray-700">${b.user_name}</p>
+                                        <p class="text-xs font-bold text-gray-700">${b.user_name} ${b.is_active ? '' : '<span class="ml-1 text-[9px] text-gray-400 font-black">PASİF</span>'}</p>
                                         <p class="text-[10px] text-gray-400">${b.timestamp}</p>
                                     </div>
                                     <div class="flex items-center gap-3">
                                         <span class="font-black text-orange-600">${b.amount.toLocaleString()} ₺</span>
-                                        ${currentUserId === p.owner_id && p.status === 'active' ? `<button onclick="approveBid(${b.id}, ${p.id})" class="bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-lg hover:bg-green-700 transition">ONAYLA</button>` : ''}
+                                        ${currentUserId === p.owner_id && p.status === 'active' && b.is_active ? `<button onclick="approveBid(${b.id}, ${p.id})" class="bg-green-600 text-white text-[10px] font-bold px-3 py-1 rounded-lg hover:bg-green-700 transition">ONAYLA</button>` : ''}
+                                        ${b.can_withdraw ? `<button onclick="withdrawBid(${b.id}, ${p.id})" class="bg-red-50 text-red-600 border border-red-100 text-[10px] font-black px-3 py-1 rounded-lg hover:bg-red-100 transition">GERİ ÇEK</button>` : ''}
                                     </div>
                                 </div>
                             `).join('')}
@@ -943,6 +940,27 @@
                         <button onclick="setProxyBid(${p.id})" class="bg-indigo-900 text-white px-3 py-2 rounded-lg text-[10px] font-black">Kaydet</button>
                     </div>
                 </div>`;
+                if (p.exchangeOpen) {
+                    const exchangeableProducts = getMyExchangeProducts(p.id);
+                    actionArea += `<div class="bg-orange-50 border border-orange-100 rounded-xl p-3 mb-3">
+                        <div class="flex items-center justify-between gap-2">
+                            <div>
+                                <p class="text-[10px] font-black text-orange-900 uppercase">Takas teklifi</p>
+                                <p class="text-[10px] text-orange-700 font-bold mt-1">Kendi aktif ilanınızla takas teklif edin.</p>
+                            </div>
+                            <button onclick="toggleExchangeOfferBox(${p.id})" class="bg-orange-600 text-white px-3 py-2 rounded-lg text-[10px] font-black">Takas teklif et</button>
+                        </div>
+                        <div id="exchange-offer-box-${p.id}" class="hidden mt-3">
+                            ${exchangeableProducts.length ? `
+                                <select id="exchange-offer-select-${p.id}" class="w-full border border-orange-100 rounded-lg px-3 py-2 text-xs font-bold bg-white">
+                                    ${exchangeableProducts.map(product => `<option value="${product.id}">${escapeHtml(product.title)} - ${Number(product.currentBid || 0).toLocaleString()} TL</option>`).join('')}
+                                </select>
+                                <p id="exchange-offer-error-${p.id}" class="hidden text-[11px] text-red-600 font-bold mt-2"></p>
+                                <button onclick="sendExchangeOffer(${p.id})" class="mt-2 w-full bg-orange-700 text-white py-2 rounded-lg text-xs font-black">Gönder</button>
+                            ` : '<p class="text-xs text-orange-700 font-bold bg-white/70 rounded-lg p-3">Takas teklif etmek için aktif bir ilanınız olmalı.</p>'}
+                        </div>
+                    </div>`;
+                }
             }
 
             if (currentUserId === p.owner_id) {
@@ -1011,6 +1029,8 @@
                             <span class="${p.status === 'active' ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'} px-3 py-1 rounded-full text-[10px] font-black uppercase">${p.statusLabel || p.status}</span>
                             ${p.condition ? `<span class="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black">${escapeHtml(p.condition)}</span>` : ''}
                             ${p.exchangeOpen ? '<span class="bg-orange-50 text-orange-700 border border-orange-100 px-3 py-1 rounded-full text-[10px] font-black lowercase">Takasa açık</span>' : ''}
+                            ${p.isFeatured ? '<span class="bg-indigo-900 text-white px-3 py-1 rounded-full text-[10px] font-black"><i class="fa-solid fa-star mr-1"></i>Öne çıkan</span>' : ''}
+                            ${p.owner_trust ? `<span class="bg-green-50 text-green-700 border border-green-100 px-3 py-1 rounded-full text-[10px] font-black"><i class="fa-solid fa-shield-halved mr-1"></i>Güven: ${escapeHtml(p.owner_trust.label)}</span>` : ''}
                             <span class="bg-gray-100 text-gray-500 px-3 py-1 rounded-full text-[10px] font-black"><i class="fa-solid fa-location-dot mr-1"></i>${escapeHtml(p.location || 'Konum yok')}</span>
                             ${appState.isAuthenticated ? `<button onclick="toggleFavorite(event, ${p.id})" class="${p.isFavorite ? 'bg-red-500 text-white' : 'bg-gray-100 text-gray-600'} px-3 py-1 rounded-full text-[10px] font-black hover:bg-red-500 hover:text-white transition"><i class="fa-solid fa-heart mr-1"></i>${p.isFavorite ? 'Favoride' : 'Favori'}</button>` : ''}
                             ${appState.isAuthenticated && currentUserId !== p.owner_id ? `<button onclick="toggleReportBox('product-report-${p.id}')" class="bg-gray-100 text-gray-600 px-3 py-1 rounded-full text-[10px] font-black hover:bg-red-50 hover:text-red-600 transition"><i class="fa-solid fa-flag mr-1"></i>Raporla</button>` : ''}
@@ -1214,6 +1234,18 @@
             if((await r.json()).success) { await fetchProducts(); showDetails(productId); showScreenNotice("Teklif onaylandı! Alıcının onayı bekleniyor."); }
         }
 
+        async function withdrawBid(bidId, productId) {
+            const response = await fetch(`/api/withdraw_bid/${bidId}`, { method: 'POST' });
+            const result = await response.json();
+            if (result.success) {
+                await fetchProducts(true);
+                await showDetails(productId);
+                showScreenNotice("Teklif geri çekildi");
+            } else {
+                showScreenNotice(result.message || "Teklif geri çekilemedi", "error");
+            }
+        }
+
         async function sellerRespond(id, act) {
             const r = await fetch('/api/seller_respond', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ product_id: id, action: act }) });
             if((await r.json()).success) { await fetchProducts(); showDetails(id); }
@@ -1276,6 +1308,48 @@
                 showScreenNotice("Otomatik teklif kaydedildi");
             } else {
                 showScreenNotice(result.message || "Otomatik teklif kaydedilemedi", "error");
+            }
+        }
+
+        function getMyExchangeProducts(targetProductId) {
+            if (!currentUserId) return [];
+            return productsData.filter(product =>
+                product.owner_id === currentUserId
+                && product.status === 'active'
+                && product.id !== targetProductId
+            );
+        }
+
+        function toggleExchangeOfferBox(productId) {
+            document.getElementById(`exchange-offer-box-${productId}`)?.classList.toggle('hidden');
+        }
+
+        async function sendExchangeOffer(productId) {
+            const select = document.getElementById(`exchange-offer-select-${productId}`);
+            const error = document.getElementById(`exchange-offer-error-${productId}`);
+            if (error) error.classList.add('hidden');
+            if (!select?.value) {
+                if (error) {
+                    error.textContent = 'Takas için bir ilan seçmelisiniz.';
+                    error.classList.remove('hidden');
+                }
+                return;
+            }
+            const response = await fetch('/api/exchange_offer', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    product_id: productId,
+                    offered_product_id: Number(select.value)
+                })
+            });
+            const result = await response.json();
+            if (result.success) {
+                showScreenNotice('Takas teklifi sohbete gönderildi');
+                await openPrivateChat(result.owner_id);
+            } else if (error) {
+                error.textContent = result.message || 'Takas teklifi gönderilemedi.';
+                error.classList.remove('hidden');
             }
         }
 
@@ -1381,10 +1455,11 @@
             listEl.innerHTML = data.items.length ? data.items.map(item => `
                 <button onclick="${item.type === 'private_message' ? 'openMessagesFromNotification()' : `openNotificationProduct(${item.product_id || 'null'})`}" class="w-full text-left p-4 border-b border-gray-50 hover:bg-orange-50 transition ${item.is_read ? 'opacity-70' : ''}">
                     <div class="flex items-start gap-3">
-                        <span class="mt-1 ${item.is_read ? 'bg-gray-200 text-gray-500' : 'bg-orange-100 text-orange-600'} w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid ${item.type === 'chat' ? 'fa-comment' : item.type === 'bid' ? 'fa-gavel' : 'fa-bell'} text-xs"></i></span>
+                        <span class="mt-1 ${item.is_read ? 'bg-gray-200 text-gray-500' : item.type === 'exchange' ? 'bg-indigo-100 text-indigo-700' : item.type === 'admin' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-600'} w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid ${item.type === 'chat' ? 'fa-comment' : item.type === 'bid' ? 'fa-gavel' : item.type === 'exchange' ? 'fa-right-left' : item.type === 'admin' ? 'fa-user-shield' : 'fa-bell'} text-xs"></i></span>
                         <span class="flex-1">
                             <span class="block text-xs font-black text-gray-800">${escapeHtml(item.title)}</span>
                             <span class="block text-[11px] text-gray-500 mt-1">${escapeHtml(item.message)}</span>
+                            <span class="inline-flex items-center gap-1 text-[9px] font-black text-gray-400 mt-2 uppercase">${escapeHtml(item.type || 'info')}</span>
                             <span class="block text-[10px] text-gray-400 mt-1">${item.created_at}</span>
                         </span>
                     </div>
@@ -1426,8 +1501,11 @@
                 <div class="relative rounded-xl transition ${conversation.unread_count ? 'bg-orange-50 border border-orange-100' : 'hover:bg-white'}">
                     <button onclick="loadPrivateChat(${conversation.user_id})" class="w-full text-left p-3 pr-12 rounded-xl">
                         <span class="flex items-center justify-between gap-2">
-                            <span class="text-xs font-black text-gray-800">${escapeHtml(conversation.user_name)}</span>
-                            ${conversation.unread_count ? `<span class="bg-orange-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full">${conversation.unread_count}</span>` : ''}
+                            <span onclick="event.stopPropagation(); openUserActions(${conversation.user_id}, '${escapeJs(conversation.user_name)}')" class="text-xs font-black text-gray-800 hover:text-orange-600 hover:underline transition cursor-pointer">${escapeHtml(conversation.user_name)}</span>
+                            <span class="flex items-center gap-1">
+                                ${conversation.is_blocked ? '<span class="bg-gray-200 text-gray-600 text-[8px] font-black px-2 py-0.5 rounded-full">ENGELLİ</span>' : ''}
+                                ${conversation.unread_count ? `<span class="bg-orange-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full">${conversation.unread_count}</span>` : ''}
+                            </span>
                         </span>
                         <span class="block text-[11px] text-gray-500 truncate mt-1">${escapeHtml(conversation.last_message)}</span>
                         <span class="block text-[9px] text-gray-400 mt-1">${escapeHtml(conversation.last_at)}</span>
@@ -1510,6 +1588,34 @@
             await loadPrivateChat(userId);
         }
 
+        async function openExchangeProductFromMessage(event, productId) {
+            if (event) event.stopPropagation();
+            let product = productsData.find(item => item.id === productId);
+            if (!product) {
+                await fetchProducts(true);
+                product = productsData.find(item => item.id === productId);
+            }
+            if (!product) {
+                showScreenNotice('İlan bulunamadı veya artık yayında değil.', 'error');
+                return;
+            }
+            document.getElementById('modal-messages')?.classList.add('hidden');
+            await showDetails(productId);
+        }
+
+        function resolveExchangeMessageProductId(message) {
+            if (message.exchange && message.exchange.open_product_id) {
+                return Number(message.exchange.open_product_id);
+            }
+            if (!message.message || !message.message.includes('takas etmek istiyor')) return null;
+            const quotedTitles = [...message.message.matchAll(/"([^"]+)"/g)].map(match => match[1]);
+            const offeredTitle = quotedTitles[1];
+            if (!offeredTitle) return null;
+            const normalizedOfferedTitle = normalizeSearchText(offeredTitle);
+            const product = productsData.find(item => normalizeSearchText(item.title) === normalizedOfferedTitle);
+            return product ? product.id : null;
+        }
+
         async function loadPrivateChat(userId, options = {}) {
             activePrivateRecipientId = userId;
             const header = document.getElementById('private-chat-header');
@@ -1526,17 +1632,55 @@
                     if (!options.silent) container.innerHTML = `<p class="text-xs text-red-500 font-bold text-center py-10">${escapeHtml(result.message || 'Sohbet yüklenemedi.')}</p>`;
                     return;
                 }
-                if (header) header.textContent = result.partner.name;
+                if (header) {
+                    const partnerId = String(result.partner.id);
+                    const partnerName = result.partner.name || 'Kullanıcı';
+                    const shouldRenderHeader = header.dataset.userId !== partnerId || header.dataset.userName !== partnerName || !header.querySelector('[data-open-chat-profile]');
+                    header.dataset.userId = partnerId;
+                    header.dataset.userName = partnerName;
+                    header.classList.add('cursor-pointer', 'hover:text-orange-600');
+                    header.onclick = () => openUserActions(result.partner.id, partnerName);
+                    if (shouldRenderHeader) {
+                        header.innerHTML = `<button type="button" data-open-chat-profile="1" class="w-full text-left font-black text-gray-700 hover:text-orange-600 hover:underline transition select-none">${escapeHtml(partnerName)}</button>`;
+                    }
+                    const profileButton = header.querySelector('[data-open-chat-profile]');
+                    if (profileButton) {
+                        profileButton.onclick = event => {
+                            event.stopPropagation();
+                            openUserActions(result.partner.id, partnerName);
+                        };
+                    }
+                }
+                const chatInput = document.getElementById('private-chat-input');
+                if (chatInput) {
+                    chatInput.disabled = Boolean(result.partner.is_blocked);
+                    chatInput.placeholder = result.partner.is_blocked ? 'Bu kullanıcıyla mesajlaşma engellenmiş.' : 'Mesaj yaz...';
+                    chatInput.classList.toggle('bg-gray-100', Boolean(result.partner.is_blocked));
+                }
                 const signature = result.messages.map(message => `${message.id}:${message.created_at}`).join('|');
                 if (options.silent && signature === lastPrivateChatSignature) return;
                 const shouldStickToBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
                 container.innerHTML = result.messages.length ? result.messages.map(message => {
                     const mine = message.sender_id === currentUserId;
+                    const exchangeProductId = resolveExchangeMessageProductId(message);
+                    const exchangeStatus = message.exchange && message.exchange.status ? message.exchange.status : null;
+                    const exchangeStatusLabel = exchangeStatus === 'accepted' ? 'Takas kabul edildi' : exchangeStatus === 'rejected' ? 'Takas reddedildi' : 'Takas bekliyor';
+                    const exchangeActions = message.exchange && message.exchange.can_respond ? `
+                        <span class="mt-2 flex gap-2">
+                            <button type="button" onclick="event.stopPropagation(); respondExchangeOffer(${message.exchange.offer_id}, 'accept')" class="bg-green-600 text-white px-3 py-1 rounded-lg text-[10px] font-black">Kabul et</button>
+                            <button type="button" onclick="event.stopPropagation(); respondExchangeOffer(${message.exchange.offer_id}, 'reject')" class="bg-red-600 text-white px-3 py-1 rounded-lg text-[10px] font-black">Reddet</button>
+                        </span>
+                    ` : '';
+                    const bubbleClass = `${mine ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-700'} max-w-[80%] rounded-2xl px-3 py-2 ${exchangeProductId ? 'cursor-pointer text-left hover:ring-2 hover:ring-orange-300 transition' : ''}`;
+                    const exchangeHint = exchangeProductId ? `<span class="${mine ? 'text-orange-100' : 'text-orange-600'} mt-2 inline-flex items-center gap-1 text-[10px] font-black"><i class="fa-solid fa-arrow-up-right-from-square"></i> Teklif edilen ilanı aç</span>` : '';
                     return `<div class="flex ${mine ? 'justify-end' : 'justify-start'}">
-                        <div class="${mine ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-700'} max-w-[80%] rounded-2xl px-3 py-2">
+                        <${exchangeProductId ? 'button type="button"' : 'div'} ${exchangeProductId ? `onclick="openExchangeProductFromMessage(event, ${exchangeProductId})"` : ''} class="${bubbleClass}">
                             <p class="text-sm font-bold whitespace-pre-wrap break-words">${escapeHtml(message.message)}</p>
+                            ${exchangeHint}
+                            ${message.exchange ? `<span class="${mine ? 'text-orange-100' : 'text-gray-500'} block text-[10px] font-black mt-1">${exchangeStatusLabel}</span>` : ''}
+                            ${exchangeActions}
                             <p class="${mine ? 'text-orange-100' : 'text-gray-400'} text-[9px] font-black mt-1">${escapeHtml(message.created_at)}</p>
-                        </div>
+                        </${exchangeProductId ? 'button' : 'div'}>
                     </div>`;
                 }).join('') : '<p class="text-xs text-gray-400 italic text-center py-10">Henüz mesaj yok.</p>';
                 lastPrivateChatSignature = signature;
@@ -1546,6 +1690,22 @@
                 await refreshPrivateConversations({ preserveOpenMenu: options.silent });
             } finally {
                 privateChatPolling = false;
+            }
+        }
+
+        async function respondExchangeOffer(offerId, action) {
+            const response = await fetch(`/api/exchange_offers/${offerId}/respond`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ action })
+            });
+            const result = await response.json();
+            if (result.success) {
+                await loadPrivateChat(activePrivateRecipientId);
+                await loadNotifications();
+                showScreenNotice(action === 'accept' ? 'Takas teklifi kabul edildi' : 'Takas teklifi reddedildi');
+            } else {
+                showScreenNotice(result.message || 'Takas yanıtı gönderilemedi', 'error');
             }
         }
 
@@ -1568,7 +1728,13 @@
             const container = document.getElementById('private-chat-messages');
             const input = document.getElementById('private-chat-input');
             const error = document.getElementById('private-chat-error');
-            if (header) header.textContent = 'Bir sohbet seçin';
+            if (header) {
+                header.textContent = 'Bir sohbet seçin';
+                header.onclick = null;
+                header.classList.remove('cursor-pointer', 'hover:text-orange-600');
+                delete header.dataset.userId;
+                delete header.dataset.userName;
+            }
             if (container) container.innerHTML = '<p class="text-xs text-gray-400 italic text-center py-16">Özel mesajlar burada görünür.</p>';
             if (input) input.value = '';
             if (error) error.classList.add('hidden');
@@ -1621,6 +1787,13 @@
                 }
                 return;
             }
+            if (input?.disabled) {
+                if (error) {
+                    error.textContent = 'Bu kullanıcıyla mesajlaşma engellenmiş.';
+                    error.classList.remove('hidden');
+                }
+                return;
+            }
             if (!message) return;
             const response = await fetch('/api/private_messages', {
                 method: 'POST',
@@ -1659,9 +1832,15 @@
                         ${profile.user.profile_image ? `<img src="${escapeHtml(profile.user.profile_image)}" class="h-24 w-24 rounded-2xl object-cover bg-gray-100 mb-3">` : `<div class="h-24 w-24 rounded-2xl bg-orange-100 text-orange-600 flex items-center justify-center text-3xl font-black mb-3">${escapeHtml((profile.user.name || 'K').charAt(0).toUpperCase())}</div>`}
                         <h3 class="text-lg font-black text-gray-800">${escapeHtml(profile.user.name)}</h3>
                         <p class="text-[11px] text-gray-400 font-bold mt-1"><i class="fa-solid fa-location-dot mr-1"></i>${escapeHtml(profile.user.location || 'Konum yok')}</p>
-                        <div class="mt-3 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-black ${getTrustBadgeClass(trust.label)}">
+                        ${profile.user.can_view_contact ? `
+                            <div class="mt-3 space-y-1 rounded-xl bg-white border border-gray-100 p-3">
+                                <p class="text-[10px] text-gray-500 font-bold break-all"><i class="fa-solid fa-envelope mr-1 text-orange-500"></i>${escapeHtml(profile.user.email || '-')}</p>
+                                <p class="text-[10px] text-gray-500 font-bold break-words"><i class="fa-solid fa-phone mr-1 text-orange-500"></i>${escapeHtml(profile.user.phone || '-')}</p>
+                            </div>
+                        ` : ''}
+                        <button type="button" onclick="openTrustDetails(${profile.user.id})" class="mt-3 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-black ${getTrustBadgeClass(trust.label)} hover:shadow-sm transition">
                             <i class="fa-solid fa-shield-halved"></i> Güven: ${escapeHtml(trust.label)} (${trust.score}/100)
-                        </div>
+                        </button>
                         ${profile.user.badges && profile.user.badges.length ? `<div class="mt-3 flex flex-wrap gap-1">${profile.user.badges.map(badge => `<span class="bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-1 rounded-full text-[9px] font-black">${escapeHtml(badge.label)}</span>`).join('')}</div>` : ''}
                     </div>
                     <div class="md:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
@@ -1719,7 +1898,9 @@
             if (userId === currentUserId) return;
             activeUserActionId = userId;
             activeUserActionName = userName || 'Kullanıcı';
+            activeUserActionBlocked = false;
             document.getElementById('user-action-name').textContent = activeUserActionName;
+            updateUserBlockButton();
             document.getElementById('user-profile-content').innerHTML = '<p class="text-center text-sm text-gray-400 py-10">Profil yükleniyor...</p>';
             document.getElementById('user-report-box').classList.add('hidden');
             document.getElementById('user-report-text').value = '';
@@ -1730,10 +1911,40 @@
             const result = await response.json();
             if (result.success) {
                 activeUserActionName = result.user.name || activeUserActionName;
+                activeUserActionBlocked = Boolean(result.user.is_blocked);
                 document.getElementById('user-action-name').textContent = activeUserActionName;
+                updateUserBlockButton();
                 document.getElementById('user-profile-content').innerHTML = renderUserProfile(result);
             } else {
                 document.getElementById('user-profile-content').innerHTML = `<p class="text-center text-sm text-red-500 font-bold py-10">${escapeHtml(result.message || 'Profil yüklenemedi.')}</p>`;
+            }
+        }
+
+        function updateUserBlockButton() {
+            const button = document.getElementById('user-block-button');
+            if (!button) return;
+            button.innerHTML = activeUserActionBlocked
+                ? '<i class="fa-solid fa-user-check mr-2"></i>Engeli Kaldır'
+                : '<i class="fa-solid fa-user-slash mr-2"></i>Engelle';
+            button.className = activeUserActionBlocked
+                ? 'w-full bg-green-50 hover:bg-green-100 text-green-700 py-3 rounded-xl text-sm font-black'
+                : 'w-full bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl text-sm font-black';
+        }
+
+        async function toggleUserBlock() {
+            if (!activeUserActionId) return;
+            const response = await fetch(`/api/private_blocks/${activeUserActionId}`, {
+                method: activeUserActionBlocked ? 'DELETE' : 'POST'
+            });
+            const result = await response.json();
+            if (result.success) {
+                activeUserActionBlocked = Boolean(result.is_blocked);
+                updateUserBlockButton();
+                if (activePrivateRecipientId === activeUserActionId) await loadPrivateChat(activeUserActionId);
+                await refreshPrivateConversations();
+                showScreenNotice(activeUserActionBlocked ? 'Kullanıcı engellendi' : 'Engel kaldırıldı');
+            } else {
+                showScreenNotice(result.message || 'İşlem tamamlanamadı', 'error');
             }
         }
 
@@ -1782,20 +1993,22 @@
             }
             const profile = await response.json();
             content.innerHTML = `
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-                    <div class="md:col-span-1 bg-orange-50 border border-orange-100 rounded-2xl p-4">
-                        <div class="flex items-start gap-3">
-                            ${profile.user.profile_image ? `<img id="profile-photo-preview" src="${escapeHtml(profile.user.profile_image)}" class="h-24 w-24 rounded-2xl object-cover bg-white border border-orange-100">` : `<div id="profile-photo-preview" class="h-24 w-24 rounded-2xl bg-white border border-orange-100 text-orange-600 flex items-center justify-center text-3xl font-black">${escapeHtml((profile.user.name || 'K').charAt(0).toUpperCase())}</div>`}
-                            <div class="flex-1">
-                        <p class="text-xl font-black text-gray-800">${escapeHtml(profile.user.name)}</p>
-                        <p class="text-xs text-gray-500 font-bold mt-1">${escapeHtml(profile.user.email)}</p>
-                        <p class="text-xs text-gray-500 font-bold mt-1">${escapeHtml(profile.user.phone || '')}</p>
-                        <p class="text-xs text-gray-500 font-bold mt-1">${escapeHtml(profile.user.location || 'Konum yok')}</p>
+                <div class="grid grid-cols-1 md:grid-cols-[minmax(280px,1fr)_2fr] gap-4 mb-6">
+                    <div class="bg-orange-50 border border-orange-100 rounded-2xl p-4 min-w-0 overflow-hidden">
+                        <div class="flex items-start gap-3 min-w-0">
+                            ${profile.user.profile_image ? `<img id="profile-photo-preview" src="${escapeHtml(profile.user.profile_image)}" class="h-24 w-24 rounded-2xl object-cover bg-white border border-orange-100 shrink-0">` : `<div id="profile-photo-preview" class="h-24 w-24 rounded-2xl bg-white border border-orange-100 text-orange-600 flex items-center justify-center text-3xl font-black shrink-0">${escapeHtml((profile.user.name || 'K').charAt(0).toUpperCase())}</div>`}
+                            <div class="flex-1 min-w-0">
+                        <p class="text-lg sm:text-xl font-black text-gray-800 leading-tight break-words">${escapeHtml(profile.user.name)}</p>
+                        ${profile.user.can_view_contact ? `
+                            <p class="text-xs text-gray-500 font-bold mt-1 leading-snug break-all">${escapeHtml(profile.user.email || '')}</p>
+                            <p class="text-xs text-gray-500 font-bold mt-1 leading-snug break-words">${escapeHtml(profile.user.phone || '')}</p>
+                        ` : ''}
+                        <p class="text-xs text-gray-500 font-bold mt-1 leading-snug break-words">${escapeHtml(profile.user.location || 'Konum yok')}</p>
                             </div>
                         </div>
                         <div class="mt-3">
                             <input id="profile-photo-input" type="file" accept="image/*" class="hidden" onchange="uploadProfilePhoto(this)">
-                            <button onclick="document.getElementById('profile-photo-input').click()" class="w-full bg-white hover:bg-orange-100 text-orange-700 border border-orange-100 py-2 rounded-xl text-xs font-black transition"><i class="fa-solid fa-camera mr-2"></i>Profil Fotoğrafı Ekle / Değiştir</button>
+                            <button onclick="document.getElementById('profile-photo-input').click()" class="w-full bg-white hover:bg-orange-100 text-orange-700 border border-orange-100 px-3 py-2 rounded-xl text-xs font-black leading-tight break-words transition"><i class="fa-solid fa-camera mr-2"></i>Profil Fotoğrafı Ekle / Değiştir</button>
                         </div>
                         <div class="flex flex-wrap gap-1 mt-3">
                             ${profile.user.phone_verified ? '<span class="bg-green-100 text-green-700 text-[9px] font-black px-2 py-1 rounded-full">Telefon Doğrulandı</span>' : ''}
@@ -1803,7 +2016,7 @@
                             <span class="bg-yellow-100 text-yellow-700 text-[9px] font-black px-2 py-1 rounded-full"><i class="fa-solid fa-star"></i> ${profile.user.rating.average || 0} (${profile.user.rating.count || 0})</span>
                         </div>
                     </div>
-                    <div class="md:col-span-2 grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    <div class="grid grid-cols-2 sm:grid-cols-3 gap-3 min-w-0">
                         ${[
                             ['İlan', profile.stats.products],
                             ['Aktif', profile.stats.activeProducts],
@@ -1811,7 +2024,7 @@
                             ['Favori', profile.stats.favorites],
                             ['Satış', profile.stats.completedSales],
                             ['Alış', profile.stats.completedPurchases]
-                        ].map(([label, value]) => `<div class="bg-gray-50 rounded-2xl p-4 text-center"><p class="text-2xl font-black text-orange-600">${value}</p><p class="text-[10px] font-black text-gray-400 uppercase">${label}</p></div>`).join('')}
+                        ].map(([label, value]) => `<div class="bg-gray-50 rounded-2xl p-4 text-center min-w-0"><p class="text-2xl font-black text-orange-600 break-words">${value}</p><p class="text-[10px] font-black text-gray-400 uppercase break-words">${label}</p></div>`).join('')}
                     </div>
                 </div>
                 <div>
@@ -1833,12 +2046,12 @@
                     <p class="text-sm font-black text-gray-700 mb-3">Kayitli aramalar</p>
                     <div class="space-y-2">
                         ${(profile.savedSearches || []).length ? profile.savedSearches.map(search => `
-                            <div class="bg-gray-50 border border-gray-100 rounded-2xl p-3 flex items-center justify-between gap-3">
-                                <div>
-                                    <p class="text-xs font-black text-gray-800">${escapeHtml(search.name)}</p>
-                                    <p class="text-[10px] text-gray-400 mt-1">${[search.query, search.category, search.brand, search.location].filter(Boolean).map(escapeHtml).join(' / ') || 'Tum ilanlar'}</p>
+                            <div class="bg-gray-50 border border-gray-100 rounded-2xl p-3 flex items-center justify-between gap-3 min-w-0">
+                                <div class="min-w-0">
+                                    <p class="text-xs font-black text-gray-800 break-words">${escapeHtml(search.name)}</p>
+                                    <p class="text-[10px] text-gray-400 mt-1 break-words">${[search.query, search.category, search.brand, search.location].filter(Boolean).map(escapeHtml).join(' / ') || 'Tum ilanlar'}</p>
                                 </div>
-                                <button onclick="deleteSavedSearch(${search.id})" class="text-red-500 hover:text-red-700 w-8 h-8 rounded-lg hover:bg-red-50"><i class="fa-solid fa-trash-can"></i></button>
+                                <button onclick="deleteSavedSearch(${search.id})" class="text-red-500 hover:text-red-700 w-8 h-8 rounded-lg hover:bg-red-50 shrink-0"><i class="fa-solid fa-trash-can"></i></button>
                             </div>
                         `).join('') : '<p class="text-xs text-gray-400 italic">Kayitli arama yok.</p>'}
                     </div>

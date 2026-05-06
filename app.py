@@ -13,6 +13,7 @@ from functools import lru_cache
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
+from sqlalchemy.exc import OperationalError
 from datetime import datetime, timedelta
 
 def load_env_file(path='.env'):
@@ -37,6 +38,7 @@ app = Flask(__name__)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'cok-gizli-bir-anahtar-123')
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///goktug.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'connect_args': {'timeout': 30}}
 
 db = SQLAlchemy(app)
 login_manager = LoginManager()
@@ -159,6 +161,16 @@ class PrivateMessage(db.Model):
     sender = db.relationship('User', foreign_keys=[sender_id])
     receiver = db.relationship('User', foreign_keys=[receiver_id])
 
+class PrivateMessageMeta(db.Model):
+    message_id = db.Column(db.Integer, db.ForeignKey('private_message.id'), primary_key=True)
+    kind = db.Column(db.String(40), nullable=False, index=True)
+    target_product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=True)
+    offered_product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=True)
+
+    message = db.relationship('PrivateMessage', backref=db.backref('meta', uselist=False))
+    target_product = db.relationship('Product', foreign_keys=[target_product_id])
+    offered_product = db.relationship('Product', foreign_keys=[offered_product_id])
+
 class PrivateConversationState(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
@@ -168,6 +180,34 @@ class PrivateConversationState(db.Model):
     __table_args__ = (
         db.UniqueConstraint('user_id', 'partner_id', name='uq_private_conversation_state_user_partner'),
     )
+
+class BlockedUser(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    blocker_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    blocked_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint('blocker_id', 'blocked_id', name='uq_blocked_user_pair'),
+    )
+
+class ExchangeOffer(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    sender_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    receiver_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
+    target_product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    offered_product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False)
+    message_id = db.Column(db.Integer, db.ForeignKey('private_message.id'), nullable=True)
+    status = db.Column(db.String(20), default='pending')
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    responded_at = db.Column(db.DateTime, nullable=True)
+
+class FeaturedProduct(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, unique=True, index=True)
+    is_active = db.Column(db.Boolean, default=True)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Favorite(db.Model):
     id = db.Column(db.Integer, primary_key=True)
@@ -358,6 +398,27 @@ def get_product_status_label(status):
     }
     return labels.get(status, status or "Aktif")
 
+def repair_turkish_mojibake(value):
+    if value is None:
+        return value
+
+    text = str(value)
+    for _ in range(3):
+        original = text
+        if any(marker in text for marker in ('Ã', 'Ä', 'Å')):
+            try:
+                text = text.encode('latin1').decode('utf-8')
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+        if any(marker in text for marker in ('ý', 'ð', 'þ', 'Ý', 'Ð', 'Þ')):
+            try:
+                text = text.encode('latin1').decode('iso-8859-9')
+            except (UnicodeEncodeError, UnicodeDecodeError):
+                pass
+        if text == original:
+            break
+    return text
+
 def create_notification(user_id, title, message, notification_type='info', product_id=None):
     if not user_id:
         return
@@ -366,8 +427,8 @@ def create_notification(user_id, title, message, notification_type='info', produ
 
     db.session.add(Notification(
         user_id=user_id,
-        title=title,
-        message=message[:300],
+        title=repair_turkish_mojibake(title),
+        message=repair_turkish_mojibake(message)[:300],
         notification_type=notification_type,
         product_id=product_id
     ))
@@ -559,7 +620,45 @@ def get_public_trust_summary(user):
         label = "Orta"
     else:
         label = "Yeni / düşük veri"
-    return {"score": score, "label": label}
+    return {"score": score, "label": repair_turkish_mojibake(label)}
+
+def get_public_trust_details(user):
+    moderation = UserModeration.query.get(user.id)
+    rating = get_user_rating_summary(user.id)
+    completed_sales = Product.query.filter_by(owner_id=user.id, status='completed').count()
+    active_products = Product.query.filter_by(owner_id=user.id, status='active').count()
+    risk = calculate_user_risk(user)
+    summary = get_public_trust_summary(user)
+    positive = []
+    warnings = []
+    if moderation and moderation.phone_verified:
+        positive.append("Telefon doğrulaması var.")
+    else:
+        warnings.append("Telefon doğrulaması yok.")
+    if rating["count"]:
+        positive.append(f"{rating['count']} yorumdan ortalama {rating['average']} puan.")
+    else:
+        warnings.append("Henüz puanlama verisi az.")
+    if completed_sales:
+        positive.append(f"{completed_sales} tamamlanan satış.")
+    if active_products:
+        positive.append(f"{active_products} aktif ilan.")
+    if risk["report_count"]:
+        warnings.append(f"{risk['report_count']} açık rapor dikkate alınıyor.")
+    if risk["withdraw_count"]:
+        warnings.append(f"{risk['withdraw_count']} işlemden vazgeçme kaydı var.")
+    return {
+        "score": summary["score"],
+        "label": summary["label"],
+        "rating": rating,
+        "completedSales": completed_sales,
+        "activeProducts": active_products,
+        "reportCount": risk["report_count"],
+        "withdrawCount": risk["withdraw_count"],
+        "phoneVerified": bool(moderation and moderation.phone_verified),
+        "positive": positive,
+        "warnings": warnings
+    }
 
 def get_sale_progress(product_id):
     progress = SaleProgress.query.filter_by(product_id=product_id).first()
@@ -813,42 +912,40 @@ def cleanup_expired_products():
 
 # API Rotaları
 def ensure_configured_admin():
-    admin_email = os.environ.get('ADMIN_EMAIL')
-    admin_password = os.environ.get('ADMIN_PASSWORD')
-    admin_name = os.environ.get('ADMIN_NAME', 'Admin')
+    try:
+        admin_email = os.environ.get('ADMIN_EMAIL')
+        admin_password = os.environ.get('ADMIN_PASSWORD')
+        admin_name = os.environ.get('ADMIN_NAME', 'Admin')
 
-    if not admin_email or not admin_password:
-        return
+        if not admin_email or not admin_password:
+            return
 
-    User.query.filter(User.role == 'admin', User.email != admin_email).update(
-        {User.role: 'user'},
-        synchronize_session=False
-    )
+        admin_user = User.query.filter_by(email=admin_email).first()
+        if admin_user:
+            changed = False
+            if admin_user.role != 'admin':
+                admin_user.role = 'admin'
+                changed = True
+            if admin_user.name != admin_name:
+                admin_user.name = admin_name
+                changed = True
+            if not check_password_hash(admin_user.password, admin_password):
+                admin_user.password = generate_password_hash(admin_password, method='pbkdf2:sha256')
+                changed = True
+            if changed:
+                db.session.commit()
+            return
 
-    admin_user = User.query.filter_by(email=admin_email).first()
-    if admin_user:
-        changed = False
-        if admin_user.role != 'admin':
-            admin_user.role = 'admin'
-            changed = True
-        if admin_user.name != admin_name:
-            admin_user.name = admin_name
-            changed = True
-        if not check_password_hash(admin_user.password, admin_password):
-            admin_user.password = generate_password_hash(admin_password, method='pbkdf2:sha256')
-            changed = True
-        if changed:
-            db.session.commit()
-        return
-
-    new_admin = User(
-        email=admin_email,
-        name=admin_name,
-        password=generate_password_hash(admin_password, method='pbkdf2:sha256'),
-        role='admin'
-    )
-    db.session.add(new_admin)
-    db.session.commit()
+        new_admin = User(
+            email=admin_email,
+            name=admin_name,
+            password=generate_password_hash(admin_password, method='pbkdf2:sha256'),
+            role='admin'
+        )
+        db.session.add(new_admin)
+        db.session.commit()
+    except OperationalError:
+        db.session.rollback()
 
 def is_admin_user(user=None):
     user = user or current_user
@@ -889,6 +986,7 @@ def get_products():
         extra = ProductExtra.query.get(p.id)
         owner_moderation = UserModeration.query.get(p.owner_id)
         owner_rating = get_user_rating_summary(p.owner_id)
+        featured = is_featured_product(p.id)
         prod_data = {
             "id": p.id,
             "title": p.title,
@@ -908,9 +1006,11 @@ def get_products():
             "owner_verified": bool(owner_moderation and owner_moderation.phone_verified),
             "owner_rating": owner_rating,
             "owner_badges": get_user_badges(p.owner),
+            "owner_trust": get_public_trust_summary(p.owner),
             "location": format_product_location(p),
             "status": p.status,
             "statusLabel": get_product_status_label(p.status),
+            "isFeatured": featured,
             "condition": extra.condition if extra and extra.condition else None,
             "exchangeOpen": bool(extra and extra.exchange_open),
             "isHidden": bool(moderation and moderation.is_hidden),
@@ -927,7 +1027,7 @@ def get_products():
         if current_user.is_authenticated:
             proxy = ProxyBid.query.filter_by(user_id=current_user.id, product_id=p.id, is_active=True).first()
             prod_data["myProxyMax"] = proxy.max_amount if proxy else None
-            if p.status == 'completed' and (current_user.id == p.owner_id or current_user.id == p.matched_user_id):
+            if p.status == 'completed' and is_admin_user():
                 seller = User.query.get(p.owner_id)
                 prod_data["seller_info"] = {
                     "phone": seller.phone,
@@ -936,6 +1036,7 @@ def get_products():
                 }
                 prod_data["sale_progress"] = serialize_sale_progress(p.id)
         output.append(prod_data)
+    output.sort(key=lambda item: (not item.get("isFeatured"), -item.get("createdAt", 0)))
     return jsonify(output)
 
 def validate_bid_amount(product, amount, settings):
@@ -964,6 +1065,16 @@ def add_bid_to_product(product, user, amount, notification_title="Yeni teklif ge
             "bid",
             product.id
         )
+
+def recalculate_product_bid_state(product):
+    top_bid = Bid.query.filter_by(product_id=product.id, is_active=True).order_by(Bid.amount.desc(), Bid.timestamp.asc()).first()
+    if top_bid:
+        product.current_bid = top_bid.amount
+        product.matched_user_id = top_bid.user_id
+    else:
+        product.current_bid = product.start_price
+        product.matched_user_id = None
+    return top_bid
 
 def next_valid_bid_amount(current_amount, max_amount, settings, product_max_price):
     step = settings["bid_step"]
@@ -1189,7 +1300,7 @@ def get_product_bids(product_id):
     if not product:
         return jsonify({"success": False, "message": "Ürün bulunamadı"}), 404
     
-    bids = Bid.query.filter_by(product_id=product_id).order_by(Bid.amount.desc()).all()
+    bids = Bid.query.filter_by(product_id=product_id).order_by(Bid.is_active.desc(), Bid.amount.desc()).all()
     output = []
     for b in bids:
         output.append({
@@ -1197,9 +1308,38 @@ def get_product_bids(product_id):
             "amount": b.amount,
             "user_name": b.user_name,
             "user_id": b.user_id,
-            "timestamp": b.timestamp.strftime('%H:%M:%S')
+            "timestamp": b.timestamp.strftime('%H:%M:%S'),
+            "is_active": b.is_active,
+            "can_withdraw": bool(b.is_active and b.user_id == current_user.id and product.status == 'active')
         })
     return jsonify(output)
+
+@app.route('/api/withdraw_bid/<int:bid_id>', methods=['POST'])
+@login_required
+def withdraw_bid(bid_id):
+    bid = Bid.query.get(bid_id)
+    if not bid:
+        return jsonify({"success": False, "message": "Teklif bulunamadı."}), 404
+    if bid.user_id != current_user.id:
+        return jsonify({"success": False, "message": "Sadece kendi teklifinizi geri çekebilirsiniz."}), 403
+    if not bid.is_active:
+        return jsonify({"success": False, "message": "Pasif teklif onaylanamaz."}), 400
+
+    product = Product.query.get(bid.product_id)
+    if not product or product.status != 'active':
+        return jsonify({"success": False, "message": "Bu teklif artık geri çekilemez."}), 400
+    bid.is_active = False
+    current_user.withdraw_count = (current_user.withdraw_count or 0) + 1
+    recalculate_product_bid_state(product)
+    create_notification(
+        product.owner_id,
+        "Teklif geri çekildi",
+        f"{current_user.name}, {product.title} ilanındaki teklifini geri çekti.",
+        "bid",
+        product.id
+    )
+    db.session.commit()
+    return jsonify({"success": True, "current_bid": product.current_bid})
 
 @app.route('/api/product_messages/<int:product_id>', methods=['GET'])
 @login_required
@@ -1275,6 +1415,19 @@ def get_private_conversation_state(user_id, partner_id):
         partner_id=partner_id
     ).first()
 
+def is_user_blocked_between(first_user_id, second_user_id):
+    return BlockedUser.query.filter(
+        (
+            (BlockedUser.blocker_id == first_user_id) & (BlockedUser.blocked_id == second_user_id)
+        ) | (
+            (BlockedUser.blocker_id == second_user_id) & (BlockedUser.blocked_id == first_user_id)
+        )
+    ).first()
+
+def is_featured_product(product_id):
+    featured = FeaturedProduct.query.filter_by(product_id=product_id, is_active=True).first()
+    return bool(featured)
+
 def serialize_private_conversation(partner, latest_message, deleted_at=None):
     unread_query = PrivateMessage.query.filter_by(
         sender_id=partner.id,
@@ -1289,7 +1442,8 @@ def serialize_private_conversation(partner, latest_message, deleted_at=None):
         "user_name": partner.name,
         "last_message": latest_message.message,
         "last_at": latest_message.created_at.strftime('%d.%m.%Y %H:%M'),
-        "unread_count": unread_count
+        "unread_count": unread_count,
+        "is_blocked": bool(is_user_blocked_between(current_user.id, partner.id))
     }
 
 def get_private_conversations():
@@ -1351,14 +1505,35 @@ def get_private_messages(user_id):
         mark_read_query = mark_read_query.filter(PrivateMessage.created_at > state.deleted_at)
     mark_read_query.update({PrivateMessage.is_read: True}, synchronize_session=False)
     db.session.commit()
+    message_meta_map = {
+        meta.message_id: meta
+        for meta in PrivateMessageMeta.query.filter(
+            PrivateMessageMeta.message_id.in_([message.id for message in messages])
+        ).all()
+    } if messages else {}
+    exchange_offer_map = {
+        offer.message_id: offer
+        for offer in ExchangeOffer.query.filter(
+            ExchangeOffer.message_id.in_([message.id for message in messages])
+        ).all()
+    } if messages else {}
+    blocked = is_user_blocked_between(current_user.id, partner.id)
     return jsonify({
-        "partner": {"id": partner.id, "name": partner.name},
+        "partner": {"id": partner.id, "name": partner.name, "is_blocked": bool(blocked)},
         "messages": [{
             "id": message.id,
             "sender_id": message.sender_id,
             "receiver_id": message.receiver_id,
             "message": message.message,
-            "created_at": message.created_at.strftime('%H:%M')
+            "created_at": message.created_at.strftime('%H:%M'),
+            "exchange": ({
+                "target_product_id": message_meta_map[message.id].target_product_id,
+                "offered_product_id": message_meta_map[message.id].offered_product_id,
+                "open_product_id": message_meta_map[message.id].offered_product_id or message_meta_map[message.id].target_product_id,
+                "offer_id": exchange_offer_map[message.id].id if exchange_offer_map.get(message.id) else None,
+                "status": exchange_offer_map[message.id].status if exchange_offer_map.get(message.id) else None,
+                "can_respond": bool(exchange_offer_map.get(message.id) and exchange_offer_map[message.id].receiver_id == current_user.id and exchange_offer_map[message.id].status == 'pending')
+            } if message_meta_map.get(message.id) and message_meta_map[message.id].kind == 'exchange_offer' else None)
         } for message in messages]
     })
 
@@ -1379,6 +1554,8 @@ def send_private_message():
         return jsonify({"success": False, "message": "Kendinize mesaj gönderemezsiniz."}), 400
     if not message_text:
         return jsonify({"success": False, "message": "Mesaj yazmak zorundasınız."}), 400
+    if is_user_blocked_between(current_user.id, receiver.id):
+        return jsonify({"success": False, "message": "Bu kullanıcıyla mesajlaşma engellenmiş."}), 403
     if len(message_text) > 500:
         return jsonify({"success": False, "message": "Mesaj en fazla 500 karakter olabilir."}), 400
     if contains_blocked_chat_text(message_text):
@@ -1408,6 +1585,63 @@ def send_private_message():
     db.session.commit()
     return jsonify({"success": True})
 
+@app.route('/api/exchange_offer', methods=['POST'])
+@login_required
+def send_exchange_offer():
+    data = request.json or {}
+    target_product = Product.query.get(data.get('product_id'))
+    offered_product = Product.query.get(data.get('offered_product_id'))
+
+    if not target_product or not is_product_visible_to_current_user(target_product):
+        return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
+    if target_product.status != 'active':
+        return jsonify({"success": False, "message": "Bu ilana şu an takas teklifi verilemez."}), 400
+    if target_product.owner_id == current_user.id:
+        return jsonify({"success": False, "message": "Kendi ilanınıza takas teklifi veremezsiniz."}), 400
+
+    if is_user_blocked_between(current_user.id, target_product.owner_id):
+        return jsonify({"success": False, "message": "Bu kullanıcıyla takas teklifi gönderilemez."}), 403
+
+    target_extra = ProductExtra.query.get(target_product.id)
+    if not target_extra or not target_extra.exchange_open:
+        return jsonify({"success": False, "message": "Bu ilan takasa açık değil."}), 400
+
+    if not offered_product or offered_product.owner_id != current_user.id:
+        return jsonify({"success": False, "message": "Takas için kendi aktif ilanınızı seçmelisiniz."}), 400
+    if offered_product.id == target_product.id or offered_product.status != 'active':
+        return jsonify({"success": False, "message": "Takas için geçerli bir aktif ilan seçmelisiniz."}), 400
+
+    message_text = (
+        f"{current_user.name}, \"{target_product.title}\" ilanınızı "
+        f"\"{offered_product.title}\" ilanıyla takas etmek istiyor."
+    )
+    private_message = PrivateMessage(
+        sender_id=current_user.id,
+        receiver_id=target_product.owner_id,
+        message=message_text
+    )
+    db.session.add(private_message)
+    db.session.flush()
+    db.session.add(PrivateMessageMeta(
+        message_id=private_message.id,
+        kind='exchange_offer',
+        target_product_id=target_product.id,
+        offered_product_id=offered_product.id
+    ))
+    db.session.add(ExchangeOffer(
+        sender_id=current_user.id,
+        receiver_id=target_product.owner_id,
+        target_product_id=target_product.id,
+        offered_product_id=offered_product.id,
+        message_id=private_message.id
+    ))
+    db.session.commit()
+    return jsonify({
+        "success": True,
+        "owner_id": target_product.owner_id,
+        "message": message_text
+    })
+
 @app.route('/api/private_conversations/<int:user_id>', methods=['DELETE'])
 @login_required
 def delete_private_conversation(user_id):
@@ -1427,6 +1661,66 @@ def delete_private_conversation(user_id):
     state.deleted_at = datetime.utcnow()
     db.session.commit()
     return jsonify({"success": True})
+
+@app.route('/api/private_blocks/<int:user_id>', methods=['POST', 'DELETE'])
+@login_required
+def toggle_private_block(user_id):
+    partner = User.query.get(user_id)
+    if not partner:
+        return jsonify({"success": False, "message": "Kullanıcı bulunamadı."}), 404
+    if partner.id == current_user.id:
+        return jsonify({"success": False, "message": "Kendinizi engelleyemezsiniz."}), 400
+
+    existing = BlockedUser.query.filter_by(blocker_id=current_user.id, blocked_id=partner.id).first()
+    if request.method == 'DELETE':
+        if existing:
+            db.session.delete(existing)
+            db.session.commit()
+        return jsonify({"success": True, "is_blocked": False})
+
+    if not existing:
+        db.session.add(BlockedUser(blocker_id=current_user.id, blocked_id=partner.id))
+        db.session.commit()
+    return jsonify({"success": True, "is_blocked": True})
+
+@app.route('/api/exchange_offers/<int:offer_id>/respond', methods=['POST'])
+@login_required
+def respond_exchange_offer(offer_id):
+    offer = ExchangeOffer.query.get(offer_id)
+    if not offer:
+        return jsonify({"success": False, "message": "Takas teklifi bulunamadı."}), 404
+    if offer.receiver_id != current_user.id:
+        return jsonify({"success": False, "message": "Bu teklife yanıt veremezsiniz."}), 403
+    if offer.status != 'pending':
+        return jsonify({"success": False, "message": "Bu takas teklifi zaten yanıtlandı."}), 400
+
+    action = (request.json or {}).get('action')
+    if action not in {'accept', 'reject'}:
+        return jsonify({"success": False, "message": "Geçersiz işlem."}), 400
+
+    offer.status = 'accepted' if action == 'accept' else 'rejected'
+    offer.responded_at = datetime.utcnow()
+    target_product = Product.query.get(offer.target_product_id)
+    offered_product = Product.query.get(offer.offered_product_id)
+    status_text = "kabul etti" if offer.status == 'accepted' else "reddetti"
+    message_text = (
+        f"{current_user.name}, \"{target_product.title if target_product else 'ilan'}\" için "
+        f"gönderdiğiniz takas teklifini {status_text}."
+    )
+    db.session.add(PrivateMessage(
+        sender_id=current_user.id,
+        receiver_id=offer.sender_id,
+        message=message_text
+    ))
+    create_notification(
+        offer.sender_id,
+        "Takas teklifi yanıtlandı",
+        message_text,
+        "exchange",
+        offer.target_product_id
+    )
+    db.session.commit()
+    return jsonify({"success": True, "status": offer.status})
 
 @app.route('/api/favorites/toggle', methods=['POST'])
 @login_required
@@ -1468,8 +1762,8 @@ def get_notifications():
         "messageUnreadCount": sum(1 for conversation in private_conversations if conversation["unread_count"]),
         "items": [{
             "id": notification.id,
-            "title": notification.title,
-            "message": notification.message,
+            "title": repair_turkish_mojibake(notification.title),
+            "message": repair_turkish_mojibake(notification.message),
             "type": notification.notification_type,
             "product_id": notification.product_id,
             "is_read": notification.is_read,
@@ -1496,18 +1790,26 @@ def get_profile():
     won_products = Product.query.filter_by(matched_user_id=current_user.id, status='completed').all()
     moderation = UserModeration.query.get(current_user.id)
     rating_summary = get_user_rating_summary(current_user.id)
+    can_view_contact = is_admin_user()
+    blocked_rows = BlockedUser.query.filter_by(blocker_id=current_user.id).order_by(BlockedUser.created_at.desc()).all()
+    user_payload = {
+        "name": current_user.name,
+        "profile_image": get_user_profile_image_url(current_user.id),
+        "location": " / ".join(part for part in (current_user.city, current_user.district, current_user.neighborhood) if part),
+        "phone_verified": bool(moderation and moderation.phone_verified),
+        "chat_banned": is_chat_banned(current_user),
+        "rating": rating_summary,
+        "trust": get_public_trust_details(current_user),
+        "can_view_contact": can_view_contact
+    }
+    if can_view_contact:
+        user_payload.update({
+            "email": current_user.email,
+            "phone": current_user.phone
+        })
 
     return jsonify({
-        "user": {
-            "name": current_user.name,
-            "email": current_user.email,
-            "phone": current_user.phone,
-            "profile_image": get_user_profile_image_url(current_user.id),
-            "location": " / ".join(part for part in (current_user.city, current_user.district, current_user.neighborhood) if part),
-            "phone_verified": bool(moderation and moderation.phone_verified),
-            "chat_banned": is_chat_banned(current_user),
-            "rating": rating_summary
-        },
+        "user": user_payload,
         "stats": {
             "products": len(current_user.products),
             "activeProducts": len(active_products),
@@ -1524,6 +1826,11 @@ def get_profile():
             "statusLabel": get_product_status_label(favorite.product.status)
         } for favorite in favorites if favorite.product],
         "privateConversations": get_private_conversations(),
+        "blockedUsers": [{
+            "id": blocked.blocked_id,
+            "name": User.query.get(blocked.blocked_id).name if User.query.get(blocked.blocked_id) else "Silinmiş kullanıcı",
+            "created_at": blocked.created_at.strftime('%d.%m.%Y %H:%M')
+        } for blocked in blocked_rows],
         "savedSearches": [{
             "id": search.id,
             "name": search.name,
@@ -1563,18 +1870,27 @@ def get_public_user_profile(user_id):
     completed_sales = Product.query.filter_by(owner_id=user.id, status='completed').count()
     rating_summary = get_user_rating_summary(user.id)
     moderation = UserModeration.query.get(user.id)
+    can_view_contact = is_admin_user()
+    user_payload = {
+        "id": user.id,
+        "name": user.name,
+        "profile_image": get_user_profile_image_url(user.id),
+        "location": " / ".join(part for part in (user.city, user.district) if part),
+        "phone_verified": bool(moderation and moderation.phone_verified),
+        "rating": rating_summary,
+        "badges": get_user_badges(user),
+        "trust": get_public_trust_summary(user),
+        "can_view_contact": can_view_contact,
+        "is_blocked": bool(is_user_blocked_between(current_user.id, user.id))
+    }
+    if can_view_contact:
+        user_payload.update({
+            "email": user.email,
+            "phone": user.phone
+        })
     return jsonify({
         "success": True,
-        "user": {
-            "id": user.id,
-            "name": user.name,
-            "profile_image": get_user_profile_image_url(user.id),
-            "location": " / ".join(part for part in (user.city, user.district) if part),
-            "phone_verified": bool(moderation and moderation.phone_verified),
-            "rating": rating_summary,
-            "badges": get_user_badges(user),
-            "trust": get_public_trust_summary(user)
-        },
+        "user": user_payload,
         "stats": {
             "activeProducts": len(active_products),
             "totalProducts": Product.query.filter_by(owner_id=user.id).count(),
@@ -1590,6 +1906,18 @@ def get_public_user_profile(user_id):
             "endTime": product.end_time.timestamp() * 1000,
             "statusLabel": get_product_status_label(product.status)
         } for product in active_products[:8]]
+    })
+
+@app.route('/api/users/<int:user_id>/trust_details', methods=['GET'])
+@login_required
+def get_user_trust_details(user_id):
+    user = User.query.get(user_id)
+    if not user or user.is_banned:
+        return jsonify({"success": False, "message": "Kullanıcı bulunamadı."}), 404
+    return jsonify({
+        "success": True,
+        "user": {"id": user.id, "name": user.name},
+        "trust": get_public_trust_details(user)
     })
 
 @app.route('/api/report_product', methods=['POST'])
@@ -1663,6 +1991,8 @@ def approve_bid():
     data = request.json
     bid_id = data.get('bid_id')
     bid = Bid.query.get(bid_id)
+    if bid and not bid.is_active:
+        return jsonify({"success": False, "message": "Pasif teklif onaylanamaz."}), 400
     
     if not bid:
         return jsonify({"success": False, "message": "Teklif bulunamadı"}), 404
@@ -1874,6 +2204,7 @@ def admin_panel():
             "favorite_count": len(product.favorites),
             "report_count": Report.query.filter_by(product_id=product.id, status='open').count(),
             "is_hidden": bool(moderation and moderation.is_hidden),
+            "is_featured": is_featured_product(product.id),
             "image_flagged": bool(moderation and moderation.image_flagged),
             "moderation_reason": moderation.reason if moderation else ""
         })
@@ -2023,6 +2354,34 @@ def unban_user(user_id):
         return jsonify({"success": True})
     return jsonify({"success": False}), 404
 
+@app.route('/api/admin/quick_search')
+@login_required
+def admin_quick_search():
+    if not is_admin_user():
+        return jsonify({"success": False}), 403
+    query = str(request.args.get('q', '')).strip()
+    if len(query) < 2:
+        return jsonify({"success": True, "items": []})
+    like = f"%{query}%"
+    users = User.query.filter((User.name.ilike(like)) | (User.email.ilike(like))).order_by(User.id.desc()).limit(5).all()
+    products = Product.query.filter(Product.title.ilike(like)).order_by(Product.id.desc()).limit(5).all()
+    return jsonify({
+        "success": True,
+        "items": [{
+            "type": "user",
+            "id": user.id,
+            "title": user.name,
+            "subtitle": user.email,
+            "status": "Banlı" if user.is_banned else "Aktif"
+        } for user in users] + [{
+            "type": "product",
+            "id": product.id,
+            "title": product.title,
+            "subtitle": product.owner_name,
+            "status": get_product_status_label(product.status)
+        } for product in products]
+    })
+
 @app.route('/api/delete_user/<int:user_id>', methods=['DELETE'])
 @login_required
 def delete_user(user_id):
@@ -2059,8 +2418,12 @@ def delete_bid(bid_id):
     if not is_admin_user(): return jsonify({"success": False}), 403
     bid = Bid.query.get(bid_id)
     if bid:
+        product = Product.query.get(bid.product_id)
         log_admin_action("Teklif silindi", "bid", bid.id, f"{bid.user_name} - {bid.amount} TL")
         db.session.delete(bid)
+        db.session.flush()
+        if product and product.status == 'active':
+            recalculate_product_bid_state(product)
         db.session.commit()
         return jsonify({"success": True})
     return jsonify({"success": False}), 404
@@ -2283,12 +2646,54 @@ def approve_product(product_id):
         product.owner_id,
         "Ä°lan onaylandÄ±",
         f"{product.title} ilanÄ±nÄ±z yayÄ±na alÄ±ndÄ±.",
-        "product",
+        "admin",
         product.id
     )
     log_admin_action("Ä°lan onaylandÄ±", "product", product_id, product.title)
     db.session.commit()
     return jsonify({"success": True})
+
+@app.route('/api/reject_product/<int:product_id>', methods=['POST'])
+@login_required
+def reject_product(product_id):
+    if not is_admin_user():
+        return jsonify({"success": False}), 403
+    product = Product.query.get(product_id)
+    if not product:
+        return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
+    reason = str((request.json or {}).get('reason', '')).strip()[:300]
+    product.status = 'cancelled'
+    moderation = get_product_moderation(product_id)
+    moderation.is_hidden = True
+    moderation.reason = reason or "Admin tarafından reddedildi."
+    create_notification(
+        product.owner_id,
+        "İlan reddedildi",
+        f"{product.title} ilanınız admin tarafından reddedildi.",
+        "admin",
+        product.id
+    )
+    log_admin_action("İlan reddedildi", "product", product_id, moderation.reason)
+    db.session.commit()
+    return jsonify({"success": True})
+
+@app.route('/api/toggle_product_featured/<int:product_id>', methods=['POST'])
+@login_required
+def toggle_product_featured(product_id):
+    if not is_admin_user():
+        return jsonify({"success": False}), 403
+    product = Product.query.get(product_id)
+    if not product:
+        return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
+    featured = FeaturedProduct.query.filter_by(product_id=product.id).first()
+    if featured:
+        featured.is_active = not featured.is_active
+    else:
+        featured = FeaturedProduct(product_id=product.id, is_active=True)
+        db.session.add(featured)
+    log_admin_action("Öne çıkarma değişti", "product", product_id, product.title)
+    db.session.commit()
+    return jsonify({"success": True, "is_featured": featured.is_active})
 
 @app.route('/api/toggle_product_image_flag/<int:product_id>', methods=['POST'])
 @login_required

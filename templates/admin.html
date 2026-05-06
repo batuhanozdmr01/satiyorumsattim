@@ -149,6 +149,7 @@
                                 <td class="p-4">
                                     <span class="px-3 py-1 rounded-full text-[10px] font-black uppercase {% if product.status == 'active' %}bg-green-100 text-green-700{% elif product.status == 'pending_admin_approval' %}bg-yellow-100 text-yellow-700{% elif product.status == 'completed' %}bg-blue-100 text-blue-700{% else %}bg-orange-100 text-orange-700{% endif %}">{{ product.status_label }}</span>
                                     {% if product.is_hidden %}<span class="px-2 py-1 rounded-full text-[9px] font-black bg-gray-200 text-gray-700">GİZLİ</span>{% endif %}
+                                    {% if product.is_featured %}<span class="px-2 py-1 rounded-full text-[9px] font-black bg-indigo-100 text-indigo-700">ÖNE ÇIKAN</span>{% endif %}
                                     {% if product.image_flagged %}<span class="px-2 py-1 rounded-full text-[9px] font-black bg-red-100 text-red-700">GÖRSEL</span>{% endif %}
                                 </td>
                                 <td class="p-4 text-center">
@@ -162,8 +163,10 @@
                                     {% if can_manage %}
                                     {% if product.status == 'pending_admin_approval' %}
                                     <button data-product-id="{{ product.id }}" onclick="approveProductFromButton(this)" class="text-green-600 hover:text-green-800 font-black text-xs p-2 hover:bg-green-50 rounded-lg"><i class="fa-solid fa-check mr-1"></i>Onayla</button>
+                                    <button data-product-id="{{ product.id }}" onclick="rejectProductFromButton(this)" class="text-red-600 hover:text-red-800 font-black text-xs p-2 hover:bg-red-50 rounded-lg"><i class="fa-solid fa-xmark mr-1"></i>Reddet</button>
                                     {% endif %}
                                     <button data-product-id="{{ product.id }}" onclick="toggleProductEditFromButton(this)" class="text-indigo-600 hover:text-indigo-800 font-black text-xs p-2 hover:bg-indigo-50 rounded-lg"><i class="fa-solid fa-pen mr-1"></i>Düzenle</button>
+                                    <button data-product-id="{{ product.id }}" onclick="toggleProductFeaturedFromButton(this)" class="{% if product.is_featured %}text-indigo-700{% else %}text-gray-600{% endif %} hover:text-indigo-900 font-black text-xs p-2 hover:bg-indigo-50 rounded-lg"><i class="fa-solid fa-star mr-1"></i>{{ 'Önden Al' if product.is_featured else 'Öne Çıkar' }}</button>
                                     <button data-product-id="{{ product.id }}" onclick="toggleProductHiddenFromButton(this)" class="{% if product.is_hidden %}text-green-600{% else %}text-gray-600{% endif %} hover:text-black font-black text-xs p-2 hover:bg-gray-50 rounded-lg"><i class="fa-solid fa-eye-slash mr-1"></i>{{ 'Göster' if product.is_hidden else 'Gizle' }}</button>
                                     <button data-product-id="{{ product.id }}" onclick="toggleProductImageFlagFromButton(this)" class="{% if product.image_flagged %}text-red-600{% else %}text-orange-600{% endif %} hover:text-red-800 font-black text-xs p-2 hover:bg-red-50 rounded-lg"><i class="fa-solid fa-image mr-1"></i>Görsel</button>
                                     <button data-product-id="{{ product.id }}" onclick="deleteProductFromButton(this)" class="text-red-500 hover:text-red-700 font-black text-xs p-2 hover:bg-red-50 rounded-lg"><i class="fa-solid fa-trash-can mr-1"></i>Sil</button>
@@ -270,6 +273,10 @@
                 </h2>
                 <div class="flex items-center gap-2">
                     <span class="text-xs font-black text-gray-400">{{ reports | length }} kayıt</span>
+                    <button onclick="filterReportsByType('')" class="bg-gray-100 hover:bg-gray-200 text-gray-700 px-3 py-2 rounded-lg text-[10px] font-black">Tümü</button>
+                    <button onclick="filterReportsByType('product')" class="bg-blue-50 hover:bg-blue-100 text-blue-700 px-3 py-2 rounded-lg text-[10px] font-black">İlan Şikayetleri</button>
+                    <button onclick="filterReportsByType('user')" class="bg-red-50 hover:bg-red-100 text-red-700 px-3 py-2 rounded-lg text-[10px] font-black">Kullanıcı</button>
+                    <button onclick="filterReportsByType('message')" class="bg-orange-50 hover:bg-orange-100 text-orange-700 px-3 py-2 rounded-lg text-[10px] font-black">Mesaj</button>
                     {% if can_manage %}
                     <button onclick="bulkResolveReports()" class="bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded-lg text-[10px] font-black">Açık Raporları Kapat</button>
                     {% endif %}
@@ -278,7 +285,7 @@
             <div class="p-4 space-y-3 max-h-96 overflow-y-auto custom-scrollbar">
                 {% if reports %}
                     {% for report in reports %}
-                        <div id="report-row-{{ report.id }}" class="border border-gray-100 rounded-2xl p-4 {% if report.status == 'open' %}bg-red-50/50{% else %}bg-gray-50 opacity-70{% endif %}">
+                        <div id="report-row-{{ report.id }}" data-report-type="{{ report.target_type }}" class="border border-gray-100 rounded-2xl p-4 {% if report.status == 'open' %}bg-red-50/50{% else %}bg-gray-50 opacity-70{% endif %}">
                             <div class="flex flex-col lg:flex-row lg:items-start justify-between gap-3">
                                 <div class="space-y-1">
                                     <div class="flex flex-wrap items-center gap-2">
@@ -574,6 +581,10 @@
             approveProduct(Number(button.dataset.productId));
         }
 
+        function rejectProductFromButton(button) {
+            rejectProduct(Number(button.dataset.productId));
+        }
+
         function toggleProductEditFromButton(button) {
             toggleProductEdit(Number(button.dataset.productId));
         }
@@ -584,6 +595,10 @@
 
         function toggleProductHiddenFromButton(button) {
             toggleProductHidden(Number(button.dataset.productId));
+        }
+
+        function toggleProductFeaturedFromButton(button) {
+            toggleProductFeatured(Number(button.dataset.productId));
         }
 
         function toggleProductImageFlagFromButton(button) {
@@ -619,6 +634,12 @@
             const container = document.getElementById(containerId);
             container.querySelectorAll('tbody tr, div[id^="admin-message-row-"]').forEach(row => {
                 row.classList.toggle('hidden', !row.textContent.toLowerCase().includes(term));
+            });
+        }
+
+        function filterReportsByType(type) {
+            document.querySelectorAll('[id^="report-row-"]').forEach(row => {
+                row.classList.toggle('hidden', Boolean(type) && row.dataset.reportType !== type);
             });
         }
 
@@ -935,6 +956,35 @@
                 setTimeout(() => location.reload(), 700);
             } else {
                 showAdminNotice(result.message || 'İlan onaylanamadı.', 'error');
+            }
+        }
+
+        async function rejectProduct(productId) {
+            const reasonEl = document.getElementById(`product-hide-reason-${productId}`);
+            const reason = reasonEl ? reasonEl.value : '';
+            if (!(await showAdminConfirm('Bu ilanı reddetmek istediğinize emin misiniz?'))) return;
+            const response = await fetch(`/api/reject_product/${productId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ reason })
+            });
+            const result = await response.json();
+            if (result.success) {
+                showAdminNotice('İlan reddedildi.');
+                setTimeout(() => location.reload(), 700);
+            } else {
+                showAdminNotice(result.message || 'İlan reddedilemedi.', 'error');
+            }
+        }
+
+        async function toggleProductFeatured(productId) {
+            const response = await fetch(`/api/toggle_product_featured/${productId}`, { method: 'POST' });
+            const result = await response.json();
+            if (result.success) {
+                showAdminNotice(result.is_featured ? 'İlan öne çıkarıldı.' : 'Öne çıkarma kaldırıldı.');
+                setTimeout(() => location.reload(), 700);
+            } else {
+                showAdminNotice(result.message || 'İşlem başarısız.', 'error');
             }
         }
 
