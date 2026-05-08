@@ -13,7 +13,6 @@ from functools import lru_cache
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
-from sqlalchemy import text
 from sqlalchemy.exc import OperationalError
 from datetime import datetime, timedelta
 
@@ -210,18 +209,6 @@ class FeaturedProduct(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-class FeaturedRequest(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    product_id = db.Column(db.Integer, db.ForeignKey('product.id'), nullable=False, index=True)
-    user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False, index=True)
-    status = db.Column(db.String(20), default='pending', index=True)
-    admin_response = db.Column(db.String(300), nullable=True)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    resolved_at = db.Column(db.DateTime, nullable=True)
-
-    product = db.relationship('Product', foreign_keys=[product_id])
-    user = db.relationship('User', foreign_keys=[user_id])
-
 class Favorite(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('user.id'), nullable=False)
@@ -358,7 +345,6 @@ class SaleProgress(db.Model):
     contact_made = db.Column(db.Boolean, default=False)
     delivered = db.Column(db.Boolean, default=False)
     paid = db.Column(db.Boolean, default=False)
-    shipping_status = db.Column(db.String(30), default='hazirlaniyor')
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 @login_manager.user_loader
@@ -514,60 +500,24 @@ DEFAULT_SITE_SETTINGS = {
     "chat_spam_seconds": "5",
     "default_duration_days": "7",
     "max_images": "5",
-    "featured_price": "5",
-    "maintenance_mode": "0",
-    "support_phone": "",
-    "support_email": "",
-    "support_instagram": "",
-    "kvkk_text": (
-        "Bu platform, kullanıcıların ikinci el ürün ilanı paylaşması, teklif alması, takas teklifi göndermesi, "
-        "favori oluşturması, özel mesajlaşması ve şikayet/destek talebi iletmesi için hizmet veren bir ilan ve "
-        "iletişim platformudur.\n\n"
-        "Kayıt sırasında paylaştığınız ad soyad, e-posta, telefon, şehir/ilçe/mahalle ve şifre bilgisi; hesabınızı "
-        "oluşturmak, güvenli giriş sağlamak, üyeler arasında ilan, teklif, takas ve mesajlaşma süreçlerini yürütmek, "
-        "kötüye kullanımı önlemek ve admin denetimini sağlamak amacıyla işlenir.\n\n"
-        "İlan, fotoğraf, açıklama, teklif, favori, mesaj, şikayet, güven seviyesi, profil fotoğrafı ve işlem kayıtları; "
-        "platformun çalışması, kullanıcı güvenliği, admin onayı/moderasyonu, uyuşmazlık ve destek süreçlerinin yürütülmesi "
-        "için saklanabilir.\n\n"
-        "Telefon ve e-posta bilgileriniz diğer kullanıcılara açık gösterilmez; yalnızca admin denetimi ve gerekli güvenlik "
-        "süreçleri kapsamında görüntülenebilir. Satış, ödeme, teslimat ve ürün doğruluğu konularında sorumluluk alıcı ve "
-        "satıcıya aittir.\n\n"
-        "Kişisel verileriniz, yasal zorunluluklar dışında üçüncü kişilerle paylaşılmaz. Hesabınız ve verilerinizle ilgili "
-        "taleplerinizi profilinizdeki destek/bize ulaşın alanlarından iletebilirsiniz."
-    )
+    "maintenance_mode": "0"
 }
-
-def safe_int(value, fallback, minimum=None, maximum=None):
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        parsed = fallback
-    if minimum is not None:
-        parsed = max(minimum, parsed)
-    if maximum is not None:
-        parsed = min(maximum, parsed)
-    return parsed
 
 def get_site_settings():
     settings = DEFAULT_SITE_SETTINGS.copy()
     for setting in SiteSetting.query.all():
         settings[setting.key] = setting.value
-    default_duration_days = safe_int(settings.get("default_duration_days"), 7)
+    default_duration_days = int(settings.get("default_duration_days", 7))
     if default_duration_days not in {1, 7, 30, 90, 180}:
         default_duration_days = 7
 
     return {
-        "min_bid": safe_int(settings.get("min_bid"), 5, 1, 1000000),
-        "bid_step": safe_int(settings.get("bid_step"), 5, 1, 1000000),
-        "chat_spam_seconds": safe_int(settings.get("chat_spam_seconds"), 5, 1, 120),
+        "min_bid": int(settings.get("min_bid", 5)),
+        "bid_step": int(settings.get("bid_step", 5)),
+        "chat_spam_seconds": int(settings.get("chat_spam_seconds", 5)),
         "default_duration_days": default_duration_days,
-        "max_images": safe_int(settings.get("max_images"), 5, 1, 5),
-        "featured_price": safe_int(settings.get("featured_price"), 5, 0, 1000000),
-        "maintenance_mode": settings.get("maintenance_mode", "0") == "1",
-        "support_phone": repair_turkish_mojibake(settings.get("support_phone", "")),
-        "support_email": repair_turkish_mojibake(settings.get("support_email", "")),
-        "support_instagram": repair_turkish_mojibake(settings.get("support_instagram", "")),
-        "kvkk_text": repair_turkish_mojibake(settings.get("kvkk_text", DEFAULT_SITE_SETTINGS["kvkk_text"]))
+        "max_images": int(settings.get("max_images", 5)),
+        "maintenance_mode": settings.get("maintenance_mode", "0") == "1"
     }
 
 def update_site_setting(key, value):
@@ -576,76 +526,6 @@ def update_site_setting(key, value):
         setting.value = str(value)
     else:
         db.session.add(SiteSetting(key=key, value=str(value)))
-
-def get_default_category_menu():
-    try:
-        with open(os.path.join(app.root_path, 'templates', 'index.html'), encoding='utf-8') as template_file:
-            html = template_file.read()
-        match = re.search(r'const\s+(?:fallbackCategoryData|categoryData)\s*=\s*\{([\s\S]*?)\n\s*\};\s*\n\s*const\s+(?:serverCategoryData|appState)', html)
-        if not match:
-            raise ValueError("Kategori bloğu bulunamadı.")
-        menu = {}
-        for category_match in re.finditer(r'"([^"]+)"\s*:\s*\[([\s\S]*?)\]\s*,?', match.group(1)):
-            category_name = category_match.group(1)
-            items = []
-            for item_match in re.finditer(r'\{\s*name:\s*"([^"]+)"\s*,\s*maxPrice:\s*(\d+)\s*,\s*icon:\s*"([^"]+)"\s*\}', category_match.group(2)):
-                items.append({
-                    "name": item_match.group(1),
-                    "maxPrice": int(item_match.group(2)),
-                    "icon": item_match.group(3)
-                })
-            if items:
-                menu[category_name] = items
-        if menu:
-            return menu
-    except Exception:
-        pass
-    return {
-        "Telefon": [{"name": "Apple", "maxPrice": 150000, "icon": "fa-mobile-alt"}, {"name": "Samsung", "maxPrice": 120000, "icon": "fa-mobile-alt"}, {"name": "Diğer", "maxPrice": 200000, "icon": "fa-mobile-alt"}],
-        "Bilgisayar": [{"name": "Apple", "maxPrice": 250000, "icon": "fa-laptop"}, {"name": "Lenovo", "maxPrice": 150000, "icon": "fa-laptop"}, {"name": "Diğer", "maxPrice": 500000, "icon": "fa-laptop"}]
-    }
-
-def normalize_category_menu(menu):
-    if not isinstance(menu, dict):
-        return None
-    normalized = {}
-    for category_name, items in menu.items():
-        clean_category = repair_turkish_mojibake(str(category_name or '').strip())[:100]
-        if not clean_category or not isinstance(items, list):
-            continue
-        clean_items = []
-        seen_items = set()
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            name = repair_turkish_mojibake(str(item.get('name') or '').strip())[:100]
-            if not name or name.lower() in seen_items:
-                continue
-            try:
-                max_price = int(item.get('maxPrice') or item.get('max_price') or 100000)
-            except (TypeError, ValueError):
-                max_price = 100000
-            icon = re.sub(r'[^a-zA-Z0-9-]', '', str(item.get('icon') or 'fa-tags'))[:60] or 'fa-tags'
-            clean_items.append({
-                "name": name,
-                "maxPrice": max(1, min(max_price, 10000000)),
-                "icon": icon
-            })
-            seen_items.add(name.lower())
-        if clean_items:
-            normalized[clean_category] = clean_items[:80]
-    return normalized
-
-def get_category_menu():
-    setting = SiteSetting.query.get("category_menu_json")
-    if setting and setting.value:
-        try:
-            menu = normalize_category_menu(json.loads(setting.value))
-            if menu:
-                return menu
-        except (TypeError, ValueError, json.JSONDecodeError):
-            pass
-    return get_default_category_menu()
 
 def log_admin_action(action, target_type=None, target_id=None, detail=None):
     admin_id = current_user.id if current_user.is_authenticated else None
@@ -820,8 +700,7 @@ def serialize_sale_progress(product_id):
     return {
         "contact_made": bool(progress and progress.contact_made),
         "delivered": bool(progress and progress.delivered),
-        "paid": bool(progress and progress.paid),
-        "shipping_status": (progress.shipping_status if progress and progress.shipping_status else 'hazirlaniyor')
+        "paid": bool(progress and progress.paid)
     }
 
 def save_product_images(images):
@@ -998,40 +877,6 @@ def load_external_profanity_terms():
                 terms.add(normalize_chat_text(term))
     return terms
 
-def load_external_profanity_terms_raw():
-    terms_path = os.path.join(app.root_path, 'data', 'profanity_tr.txt')
-    if not os.path.exists(terms_path):
-        return []
-
-    terms = []
-    with open(terms_path, encoding='utf-8-sig') as terms_file:
-        for line in terms_file:
-            term = repair_turkish_mojibake(line.strip())
-            if term and not term.startswith('#') and term not in terms:
-                terms.append(term)
-    return terms
-
-def save_external_profanity_terms(terms):
-    clean_terms = []
-    seen = set()
-    for term in terms:
-        clean = repair_turkish_mojibake(str(term or '').strip())[:80]
-        normalized = normalize_chat_text(clean)
-        if not clean or not normalized or normalized in seen:
-            continue
-        clean_terms.append(clean)
-        seen.add(normalized)
-
-    data_dir = os.path.join(app.root_path, 'data')
-    os.makedirs(data_dir, exist_ok=True)
-    terms_path = os.path.join(data_dir, 'profanity_tr.txt')
-    with open(terms_path, 'w', encoding='utf-8') as terms_file:
-        terms_file.write('\n'.join(clean_terms))
-        if clean_terms:
-            terms_file.write('\n')
-    load_external_profanity_terms.cache_clear()
-    return clean_terms
-
 def normalize_chat_text(text):
     replacements = str.maketrans({
         'ı': 'i',
@@ -1130,15 +975,6 @@ def ensure_configured_admin():
     except OperationalError:
         db.session.rollback()
 
-def ensure_optional_database_columns():
-    try:
-        columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(sale_progress)")).fetchall()}
-        if 'shipping_status' not in columns:
-            db.session.execute(text("ALTER TABLE sale_progress ADD COLUMN shipping_status VARCHAR(30) DEFAULT 'hazirlaniyor'"))
-            db.session.commit()
-    except OperationalError:
-        db.session.rollback()
-
 def is_admin_user(user=None):
     user = user or current_user
     if not user or not user.is_authenticated:
@@ -1154,7 +990,6 @@ def is_admin_user(user=None):
 def bootstrap_configured_admin():
     if not getattr(app, '_configured_admin_checked', False):
         db.create_all()
-        ensure_optional_database_columns()
         ensure_configured_admin()
         app._configured_admin_checked = True
     if request.method in {'POST', 'DELETE', 'PATCH'} and request.path.startswith('/api/') and request.path != '/api/login':
@@ -1447,7 +1282,7 @@ def update_sale_progress(product_id):
     product = Product.query.get(product_id)
     if not product or product.status != 'completed':
         return jsonify({"success": False, "message": "Tamamlanmis satis bulunamadi."}), 404
-    if current_user.id not in {product.owner_id, product.matched_user_id} and not is_admin_user():
+    if current_user.id not in {product.owner_id, product.matched_user_id}:
         return jsonify({"success": False, "message": "Bu satisi guncelleyemezsiniz."}), 403
 
     data = request.json or {}
@@ -1455,8 +1290,6 @@ def update_sale_progress(product_id):
     for field in ('contact_made', 'delivered', 'paid'):
         if field in data:
             setattr(progress, field, bool(data.get(field)))
-    if data.get('shippingStatus') in {'hazirlaniyor', 'kargoda', 'teslim_edildi', 'iptal'}:
-        progress.shipping_status = data.get('shippingStatus')
     create_notification(
         product.matched_user_id if current_user.id == product.owner_id else product.owner_id,
         "Satis takibi guncellendi",
@@ -1975,30 +1808,6 @@ def mark_notifications_read():
     db.session.commit()
     return jsonify({"success": True})
 
-@app.route('/api/notifications', methods=['DELETE'])
-@login_required
-def delete_notifications():
-    deleted = Notification.query.filter(
-        Notification.user_id == current_user.id,
-        Notification.notification_type != 'private_message'
-    ).delete(synchronize_session=False)
-    db.session.commit()
-    return jsonify({"success": True, "deleted": deleted})
-
-@app.route('/api/notifications/<int:notification_id>', methods=['DELETE'])
-@login_required
-def delete_notification(notification_id):
-    notification = Notification.query.filter_by(
-        id=notification_id,
-        user_id=current_user.id
-    ).first()
-    if not notification or notification.notification_type == 'private_message':
-        return jsonify({"success": False, "message": "Bildirim bulunamadı."}), 404
-
-    db.session.delete(notification)
-    db.session.commit()
-    return jsonify({"success": True})
-
 @app.route('/api/profile', methods=['GET'])
 @login_required
 def get_profile():
@@ -2067,7 +1876,7 @@ def get_profile():
 def get_my_orders():
     orders = Product.query.filter(
         Product.matched_user_id == current_user.id,
-        Product.status.in_(['pending_bidder_action', 'seller_info_confirmation', 'completed', 'cancelled'])
+        Product.status.in_(['pending_bidder_action', 'seller_info_confirmation', 'completed'])
     ).order_by(Product.created_at.desc()).all()
     return jsonify({
         "success": True,
@@ -2391,7 +2200,6 @@ def index():
         'index.html',
         is_current_admin=is_admin_user(),
         site_settings=settings,
-        category_data=get_category_menu(),
         maintenance_mode=settings["maintenance_mode"] and not is_admin_user(),
         active_announcement=active_announcement
     )
@@ -2414,13 +2222,8 @@ def admin_panel():
         "pending_products": Product.query.filter_by(status='pending_admin_approval').count(),
         "open_appeals": Appeal.query.filter_by(status='open').count(),
         "featured_products": FeaturedProduct.query.filter_by(is_active=True).count(),
-        "featured_requests": FeaturedRequest.query.filter_by(status='pending').count(),
         "active_products": Product.query.filter_by(status='active').count(),
         "completed_products": Product.query.filter_by(status='completed').count(),
-        "tracked_orders": Product.query.filter(
-            Product.matched_user_id.isnot(None),
-            Product.status.in_(['pending_bidder_action', 'seller_info_confirmation', 'completed', 'cancelled'])
-        ).count(),
         "chat_messages": ChatMessage.query.count()
     }
     
@@ -2480,35 +2283,6 @@ def admin_panel():
             "moderation_reason": moderation.reason if moderation else ""
         })
 
-    shipping_labels = {
-        "hazirlaniyor": "Hazırlanıyor",
-        "kargoda": "Kargoda",
-        "teslim_edildi": "Teslim edildi",
-        "iptal": "İptal"
-    }
-    admin_orders = []
-    order_products = Product.query.filter(
-        Product.matched_user_id.isnot(None),
-        Product.status.in_(['pending_bidder_action', 'seller_info_confirmation', 'completed', 'cancelled'])
-    ).order_by(Product.created_at.desc()).limit(80).all()
-    for product in order_products:
-        buyer = User.query.get(product.matched_user_id) if product.matched_user_id else None
-        progress = serialize_sale_progress(product.id)
-        admin_orders.append({
-            "id": product.id,
-            "title": repair_turkish_mojibake(product.title),
-            "seller_name": repair_turkish_mojibake(product.owner_name),
-            "buyer_name": buyer.name if buyer else "Silinmiş kullanıcı",
-            "amount": product.current_bid,
-            "status": product.status,
-            "status_label": get_product_status_label(product.status),
-            "shipping_status": progress["shipping_status"],
-            "shipping_label": shipping_labels.get(progress["shipping_status"], "Hazırlanıyor"),
-            "progress": progress,
-            "created_at": product.created_at.strftime('%Y-%m-%d %H:%M'),
-            "image": product.image_url
-        })
-
     messages_data = []
     for message in ChatMessage.query.order_by(ChatMessage.timestamp.desc()).limit(100).all():
         messages_data.append({
@@ -2555,18 +2329,6 @@ def admin_panel():
 
     admin_notifications = Notification.query.filter_by(user_id=current_user.id).order_by(Notification.created_at.desc()).limit(12).all()
     admin_tasks = []
-    for request_row in FeaturedRequest.query.filter_by(status='pending').order_by(FeaturedRequest.created_at.desc()).limit(8).all():
-        product = Product.query.get(request_row.product_id)
-        user = User.query.get(request_row.user_id)
-        admin_tasks.append({
-            "type": "featured_request",
-            "label": "Öne çıkarma",
-            "title": repair_turkish_mojibake(product.title) if product else "Silinmiş ilan",
-            "detail": f"{user.name if user else 'Silinmiş kullanıcı'} | {request_row.created_at.strftime('%Y-%m-%d %H:%M')}",
-            "featured_request_id": request_row.id,
-            "product_id": request_row.product_id,
-            "severity": "indigo"
-        })
     for product in Product.query.filter_by(status='pending_admin_approval').order_by(Product.created_at.desc()).limit(8).all():
         admin_tasks.append({
             "type": "product",
@@ -2672,32 +2434,12 @@ def admin_panel():
             "created_at": appeal.created_at.strftime('%Y-%m-%d %H:%M')
         })
 
-    featured_requests = []
-    for request_row in FeaturedRequest.query.order_by(FeaturedRequest.created_at.desc()).limit(50).all():
-        product = Product.query.get(request_row.product_id)
-        user = User.query.get(request_row.user_id)
-        featured_requests.append({
-            "id": request_row.id,
-            "product_id": request_row.product_id,
-            "product_title": repair_turkish_mojibake(product.title) if product else "Silinmiş ilan",
-            "user_name": user.name if user else "Silinmiş kullanıcı",
-            "status": request_row.status,
-            "status_label": {
-                "pending": "Bekliyor",
-                "approved": "Onaylandı",
-                "rejected": "Reddedildi"
-            }.get(request_row.status, request_row.status),
-            "admin_response": repair_turkish_mojibake(request_row.admin_response),
-            "created_at": request_row.created_at.strftime('%Y-%m-%d %H:%M')
-        })
-
     return render_template(
         'admin.html',
         users=users_data,
         stats=stats,
         reports=reports_data,
         products=products_data,
-        admin_orders=admin_orders,
         messages=messages_data,
         category_stats=category_stats,
         daily_stats=daily_stats,
@@ -2707,23 +2449,7 @@ def admin_panel():
         announcements=announcements_data,
         appeals=appeals_data,
         logs=logs_data,
-        featured_requests=featured_requests,
-        category_menu=get_category_menu(),
         can_manage=is_admin_user()
-    )
-
-@app.route('/admin/categories')
-@login_required
-def admin_categories_panel():
-    if not is_admin_user():
-        flash("Admin yetkiniz yok!")
-        return redirect(url_for('index'))
-    category_menu = get_category_menu()
-    return render_template(
-        'admin_categories.html',
-        category_menu=category_menu,
-        category_count=len(category_menu),
-        item_count=sum(len(items) for items in category_menu.values())
     )
 
 @app.route('/api/ban_user/<int:user_id>', methods=['POST'])
@@ -2940,140 +2666,6 @@ def bulk_products_action():
     db.session.commit()
     return jsonify({"success": True, "changed": changed})
 
-@app.route('/api/admin/orders/<int:product_id>', methods=['POST'])
-@login_required
-def update_admin_order(product_id):
-    if not is_admin_user():
-        return jsonify({"success": False}), 403
-    product = Product.query.get(product_id)
-    if not product or not product.matched_user_id:
-        return jsonify({"success": False, "message": "Takip edilecek sipariş bulunamadı."}), 404
-
-    data = request.json or {}
-    allowed_statuses = {'pending_bidder_action', 'seller_info_confirmation', 'completed', 'cancelled'}
-    if data.get('status') in allowed_statuses:
-        product.status = data.get('status')
-
-    progress = get_sale_progress(product.id)
-    for field in ('contact_made', 'delivered', 'paid'):
-        if field in data:
-            setattr(progress, field, bool(data.get(field)))
-    if data.get('shippingStatus') in {'hazirlaniyor', 'kargoda', 'teslim_edildi', 'iptal'}:
-        progress.shipping_status = data.get('shippingStatus')
-
-    for user_id in {product.owner_id, product.matched_user_id}:
-        if user_id:
-            create_unique_unread_notification(
-                user_id,
-                "Sipariş takibi güncellendi",
-                f"{product.title} için sipariş/takip durumu admin tarafından güncellendi.",
-                "sale",
-                product.id
-            )
-    log_admin_action("Sipariş takibi güncellendi", "order", product.id, product.title)
-    db.session.commit()
-    return jsonify({"success": True, "sale_progress": serialize_sale_progress(product.id), "status": product.status})
-
-@app.route('/api/admin/featured_requests/<int:request_id>', methods=['POST'])
-@login_required
-def resolve_featured_request(request_id):
-    if not is_admin_user():
-        return jsonify({"success": False}), 403
-    featured_request = FeaturedRequest.query.get(request_id)
-    if not featured_request:
-        return jsonify({"success": False, "message": "Öne çıkarma talebi bulunamadı."}), 404
-
-    data = request.json or {}
-    status = data.get('status')
-    if status not in {'approved', 'rejected'}:
-        return jsonify({"success": False, "message": "Geçersiz talep durumu."}), 400
-
-    product = Product.query.get(featured_request.product_id)
-    if status == 'approved':
-        if not product:
-            return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
-        featured = FeaturedProduct.query.filter_by(product_id=product.id).first()
-        if not featured:
-            featured = FeaturedProduct(product_id=product.id, is_active=True)
-            db.session.add(featured)
-        else:
-            featured.is_active = True
-        featured_request.status = 'approved'
-        featured_request.admin_response = repair_turkish_mojibake(str(data.get('message') or 'Öne çıkarma talebiniz onaylandı.').strip())[:300]
-        create_notification(
-            featured_request.user_id,
-            "Öne çıkarma onaylandı",
-            f"{product.title} ilanınız öne çıkarıldı.",
-            "admin",
-            product.id
-        )
-        log_admin_action("Öne çıkarma talebi onaylandı", "featured_request", featured_request.id, product.title)
-    else:
-        featured_request.status = 'rejected'
-        featured_request.admin_response = repair_turkish_mojibake(str(data.get('message') or 'Öne çıkarma talebiniz reddedildi.').strip())[:300]
-        create_notification(
-            featured_request.user_id,
-            "Öne çıkarma reddedildi",
-            f"{product.title if product else 'İlan'} için öne çıkarma talebiniz reddedildi.",
-            "admin",
-            product.id if product else None
-        )
-        log_admin_action("Öne çıkarma talebi reddedildi", "featured_request", featured_request.id, product.title if product else None)
-
-    featured_request.resolved_at = datetime.utcnow()
-    db.session.commit()
-    return jsonify({"success": True, "status": featured_request.status})
-
-@app.route('/api/admin/send_notification', methods=['POST'])
-@login_required
-def admin_send_notification():
-    if not is_admin_user():
-        return jsonify({"success": False}), 403
-    data = request.json or {}
-    title = repair_turkish_mojibake(str(data.get('title') or '').strip())[:120]
-    message = repair_turkish_mojibake(str(data.get('message') or '').strip())[:300]
-    target = data.get('target') or 'all'
-    if not title or not message:
-        return jsonify({"success": False, "message": "Başlık ve mesaj zorunlu."}), 400
-
-    users_query = User.query
-    if target == 'user':
-        try:
-            user_id = int(data.get('user_id'))
-        except (TypeError, ValueError):
-            return jsonify({"success": False, "message": "Geçerli bir kullanıcı seçin."}), 400
-        users_query = users_query.filter_by(id=user_id)
-    elif target == 'admins':
-        users_query = users_query.filter_by(role='admin')
-    elif target != 'all':
-        return jsonify({"success": False, "message": "Geçersiz hedef."}), 400
-
-    sent = 0
-    for user in users_query.all():
-        create_notification(user.id, title, message, "admin")
-        sent += 1
-    log_admin_action("Admin bildirimi gönderildi", "notification", None, f"{target}: {sent} kullanıcı")
-    db.session.commit()
-    return jsonify({"success": True, "sent": sent})
-
-@app.route('/api/admin/profanity_terms', methods=['POST'])
-@login_required
-def update_admin_profanity_terms():
-    if not is_admin_user():
-        return jsonify({"success": False}), 403
-    data = request.json or {}
-    terms_value = data.get('terms')
-    if isinstance(terms_value, str):
-        terms = re.split(r'[\n,]+', terms_value)
-    elif isinstance(terms_value, list):
-        terms = terms_value
-    else:
-        terms = []
-    saved_terms = save_external_profanity_terms(terms)
-    log_admin_action("Yasaklı kelimeler güncellendi", "settings", None, f"{len(saved_terms)} özel kelime")
-    db.session.commit()
-    return jsonify({"success": True, "terms": saved_terms, "count": len(saved_terms)})
-
 @app.route('/api/admin_settings', methods=['POST'])
 @login_required
 def update_admin_settings():
@@ -3085,8 +2677,7 @@ def update_admin_settings():
         "bid_step": (1, 1000000),
         "chat_spam_seconds": (1, 120),
         "default_duration_days": (1, 180),
-        "max_images": (1, 5),
-        "featured_price": (0, 1000000)
+        "max_images": (1, 5)
     }
     for key, (minimum, maximum) in limits.items():
         try:
@@ -3099,43 +2690,9 @@ def update_admin_settings():
             return jsonify({"success": False, "message": "Varsayılan ilan süresi 1 gün, 7 gün, 1 ay, 3 ay veya 6 ay olmalıdır."}), 400
         update_site_setting(key, value)
     update_site_setting("maintenance_mode", "1" if data.get("maintenance_mode") else "0")
-    for key, max_length in {
-        "support_phone": 80,
-        "support_email": 120,
-        "support_instagram": 120,
-        "kvkk_text": 5000
-    }.items():
-        value = repair_turkish_mojibake(str(data.get(key) or '').strip())[:max_length]
-        update_site_setting(key, value)
     log_admin_action("Site ayarları güncellendi", "settings", None, json.dumps(data, ensure_ascii=False))
     db.session.commit()
     return jsonify({"success": True})
-
-@app.route('/api/admin/category_menu', methods=['POST'])
-@login_required
-def save_category_menu():
-    if not is_admin_user():
-        return jsonify({"success": False}), 403
-    data = request.json or {}
-    menu = normalize_category_menu(data.get('menu'))
-    if not menu:
-        return jsonify({"success": False, "message": "En az bir kategori ve alt kategori girmelisiniz."}), 400
-    update_site_setting("category_menu_json", json.dumps(menu, ensure_ascii=False))
-    log_admin_action("Kategori menüsü güncellendi", "settings", None, f"{len(menu)} kategori")
-    db.session.commit()
-    return jsonify({"success": True, "menu": menu})
-
-@app.route('/api/admin/category_menu/reset', methods=['POST'])
-@login_required
-def reset_category_menu():
-    if not is_admin_user():
-        return jsonify({"success": False}), 403
-    setting = SiteSetting.query.get("category_menu_json")
-    if setting:
-        db.session.delete(setting)
-    log_admin_action("Kategori menüsü varsayılana alındı", "settings", None, None)
-    db.session.commit()
-    return jsonify({"success": True, "menu": get_default_category_menu()})
 
 @app.route('/api/admin_announcement', methods=['POST'])
 @login_required
@@ -3359,15 +2916,6 @@ def request_product_featured(product_id):
         return jsonify({"success": False, "message": "Sadece yayındaki ilanlar öne çıkarılabilir."}), 400
     if is_featured_product(product.id):
         return jsonify({"success": False, "message": "Bu ilan zaten öne çıkarılmış."}), 400
-    existing_request = FeaturedRequest.query.filter_by(
-        product_id=product.id,
-        user_id=current_user.id,
-        status='pending'
-    ).first()
-    if existing_request:
-        return jsonify({"success": False, "message": "Bu ilan için bekleyen öne çıkarma talebiniz var."}), 400
-
-    db.session.add(FeaturedRequest(product_id=product.id, user_id=current_user.id))
 
     admin_users = [user for user in User.query.filter_by(role='admin').all() if is_admin_user(user)]
     for admin in admin_users:
@@ -3414,25 +2962,10 @@ def edit_product(product_id):
     if 'exchangeOpen' in data:
         extra = get_product_extra(product.id)
         extra.exchange_open = bool(data.get('exchangeOpen'))
-    if 'images' in data:
-        images = data.get('images')
-        if not isinstance(images, list):
-            return jsonify({"success": False, "message": "Fotoğraf listesi geçerli değil."}), 400
-        settings = get_site_settings()
-        images = [image for image in images if isinstance(image, str) and image.strip()]
-        if not images:
-            return jsonify({"success": False, "message": "İlanda en az 1 fotoğraf olmalıdır."}), 400
-        if len(images) > settings["max_images"]:
-            return jsonify({"success": False, "message": f"En fazla {settings['max_images']} fotoğraf ekleyebilirsiniz."}), 400
-        saved_images = save_product_images(images)
-        if not saved_images:
-            return jsonify({"success": False, "message": "Fotoğraflar kaydedilemedi."}), 400
-        product.image_url = saved_images[0]
-        product.image_urls = json.dumps(saved_images, ensure_ascii=False)
     if is_admin_user():
         log_admin_action("İlan düzenlendi", "product", product.id, product.title)
     db.session.commit()
-    return jsonify({"success": True, "images": get_product_images(product)})
+    return jsonify({"success": True})
 
 @app.route('/api/rate_sale', methods=['POST'])
 @login_required
@@ -3673,6 +3206,5 @@ def add_product():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
-        ensure_optional_database_columns()
         ensure_configured_admin()
     app.run(debug=True)

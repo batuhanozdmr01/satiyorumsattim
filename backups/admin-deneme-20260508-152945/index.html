@@ -14,7 +14,7 @@
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #ffedd5; border-radius: 10px; }
         .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #fed7aa; }
         .submenu { max-height: 0; overflow: hidden; transition: max-height 0.3s ease-out; }
-        .submenu.open { max-height: 2400px; }
+        .submenu.open { max-height: 800px; }
         .rotate-icon { transition: transform 0.3s; }
         .open .rotate-icon { transform: rotate(180deg); }
         .cat-count { font-size: 0.75rem; color: #9ca3af; margin-left: auto; font-weight: normal; }
@@ -81,7 +81,7 @@
                 </div>
                 <div class="flex items-center gap-3">
                     {% if current_user.is_authenticated %}
-                        <div class="relative" data-notification-root>
+                        <div class="relative">
                             <button onclick="toggleNotifications()" class="relative bg-orange-700 hover:bg-orange-800 text-white w-10 h-10 rounded-lg transition" title="Bildirimler">
                                 <i class="fa-solid fa-bell"></i>
                                 <span id="notification-count" class="hidden absolute -top-1 -right-1 bg-indigo-900 text-white text-[10px] min-w-5 h-5 px-1 rounded-full font-black items-center justify-center"></span>
@@ -89,10 +89,7 @@
                             <div id="notification-panel" class="hidden absolute right-0 top-12 w-80 bg-white text-gray-800 rounded-2xl shadow-2xl border border-gray-100 overflow-hidden z-[90]">
                                 <div class="p-4 border-b flex items-center justify-between">
                                     <p class="font-black text-sm">Bildirimler</p>
-                                    <div class="flex items-center gap-3">
-                                        <button onclick="markNotificationsRead()" class="text-[10px] font-black text-orange-600">Okundu yap</button>
-                                        <button onclick="deleteAllNotifications()" class="text-[10px] font-black text-red-600">Sil</button>
-                                    </div>
+                                    <button onclick="markNotificationsRead()" class="text-[10px] font-black text-orange-600">Okundu yap</button>
                                 </div>
                                 <div id="notification-list" class="max-h-80 overflow-y-auto custom-scrollbar"></div>
                             </div>
@@ -195,9 +192,11 @@
                 
                 <div class="bg-gray-50 p-4 rounded-xl border border-gray-100 text-[10px] text-gray-500 max-h-40 overflow-y-auto custom-scrollbar mb-2 space-y-2">
                     <p class="font-bold text-gray-700">KVKK AYDINLATMA VE KULLANICI SORUMLULUK METNİ</p>
-                    {% for paragraph in site_settings.kvkk_text.split('\n') if paragraph.strip() %}
-                        <p>{{ paragraph }}</p>
-                    {% endfor %}
+                    <p>Bu platform, kullanıcıların ikinci el ürün ilanı paylaşması, teklif alması, takas teklifi göndermesi, favori oluşturması, özel mesajlaşması ve şikayet/destek talebi iletmesi için hizmet veren bir ilan ve iletişim platformudur.</p>
+                    <p>Kayıt sırasında paylaştığınız ad soyad, e-posta, telefon, şehir/ilçe/mahalle, şifre bilgisi; hesabınızı oluşturmak, güvenli giriş sağlamak, üyeler arasında ilan, teklif, takas ve mesajlaşma süreçlerini yürütmek, kötüye kullanımı önlemek ve admin denetimini sağlamak amacıyla işlenir.</p>
+                    <p>İlan, fotoğraf, açıklama, teklif, favori, mesaj, şikayet, güven seviyesi, profil fotoğrafı ve işlem kayıtları; platformun çalışması, kullanıcı güvenliği, admin onayı/moderasyonu, uyuşmazlık ve destek süreçlerinin yürütülmesi için saklanabilir.</p>
+                    <p>Telefon ve e-posta bilgileriniz diğer kullanıcılara açık gösterilmez; yalnızca admin denetimi ve gerekli güvenlik süreçleri kapsamında görüntülenebilir. Satış, ödeme, teslimat ve ürün doğruluğu konularında sorumluluk alıcı ve satıcıya aittir.</p>
+                    <p>Kişisel verileriniz, yasal zorunluluklar dışında üçüncü kişilerle paylaşılmaz. Hesabınız ve verilerinizle ilgili taleplerinizi profilinizdeki destek/bize ulaşın alanlarından iletebilirsiniz.</p>
                 </div>
                 
                 <div class="flex items-start gap-2 px-1">
@@ -350,7 +349,6 @@
     <script type="application/json" id="app-state">
         {{ {"currentUserId": current_user.id if current_user.is_authenticated else none, "isAuthenticated": current_user.is_authenticated, "siteSettings": site_settings} | tojson }}
     </script>
-    <script type="application/json" id="category-data">{{ category_data | tojson }}</script>
 
     <script>
         const turkeyData = {
@@ -461,7 +459,7 @@
             }
         }
 
-        const fallbackCategoryData = {
+        const categoryData = {
             "Telefon": [
                 { name: "Apple", maxPrice: 150000, icon: "fa-mobile-alt" }, 
                 { name: "Samsung", maxPrice: 120000, icon: "fa-mobile-alt" },
@@ -544,10 +542,8 @@
             ]
         };
 
-        const serverCategoryData = JSON.parse(document.getElementById('category-data').textContent || '{}');
-        const categoryData = Object.keys(serverCategoryData).length ? serverCategoryData : fallbackCategoryData;
         const appState = JSON.parse(document.getElementById('app-state').textContent);
-        const siteSettings = appState.siteSettings || { min_bid: 5, bid_step: 5, default_duration_days: 7, max_images: 5, featured_price: 5 };
+        const siteSettings = appState.siteSettings || { min_bid: 5, bid_step: 5, default_duration_days: 7, max_images: 5 };
         let productsData = [];
         let currentUserId = appState.currentUserId;
         let currentViewData = [];
@@ -561,7 +557,6 @@
         let activeDetailImageIndex = 0;
         let detailTouchStartX = 0;
         let productCardImageIndexes = {};
-        let editProductImageState = {};
         let advancedFilters = { minPrice: null, maxPrice: null, location: '' };
         let productChatPolling = false;
         let privateChatPolling = false;
@@ -583,7 +578,6 @@
             initModalCategories();
             initTurkeyData();
             initImagePreview();
-            initOutsideCloseHandlers();
             await fetchProducts();
             if (appState.isAuthenticated) {
                 await loadNotifications();
@@ -593,68 +587,21 @@
             setInterval(pollActiveChats, 2500);
         };
 
-        function initOutsideCloseHandlers() {
-            ['modal-profile', 'modal-messages'].forEach(modalId => {
-                const modal = document.getElementById(modalId);
-                if (!modal || modal.dataset.outsideCloseReady) return;
-                modal.dataset.outsideCloseReady = '1';
-                modal.addEventListener('click', event => {
-                    if (event.target === modal) {
-                        modal.classList.add('hidden');
-                        if (modalId === 'modal-messages') closePrivateConversationMenus();
-                    }
-                });
-            });
-
-            document.addEventListener('click', event => {
-                const notificationRoot = event.target.closest('[data-notification-root]');
-                if (!notificationRoot) {
-                    document.getElementById('notification-panel')?.classList.add('hidden');
-                }
-            });
-        }
-
-        async function fetchProducts(preserveView = false, options = {}) {
+        async function fetchProducts(preserveView = false) {
             const response = await fetch('/api/products');
             productsData = await response.json();
             if (!preserveView) {
                 currentViewMode = { type: 'all' };
                 currentSortType = null;
             }
-            if (options.render !== false) renderCurrentView();
-        }
-
-        function hasVisibleElement(selector) {
-            return Array.from(document.querySelectorAll(selector)).some(element => !element.classList.contains('hidden'));
-        }
-
-        function shouldPauseProductAutoRefresh() {
-            const active = document.activeElement;
-            if (active && active.matches('input, textarea, select, [contenteditable="true"]')) return true;
-
-            return hasVisibleElement([
-                '#modal-ilan',
-                '#modal-login',
-                '#modal-register',
-                '#modal-profile',
-                '#modal-messages',
-                '#modal-orders',
-                '#modal-user-actions',
-                '#notification-panel',
-                '[id^="edit-product-box-"]',
-                '[id^="delete-product-confirm-"]',
-                '[id^="exchange-offer-box-"]',
-                '[id^="product-report-"]',
-                '[id^="message-report-"]'
-            ].join(','));
+            renderCurrentView();
         }
 
         async function refreshProducts(preserveView = true) {
+            await fetchProducts(preserveView);
             const detailPageVisible = !document.getElementById('detail-page').classList.contains('hidden');
-            if (shouldPauseProductAutoRefresh()) return;
-
-            await fetchProducts(preserveView, { render: !detailPageVisible });
-            if (activeDetailId && detailPageVisible) {
+            const detailInputFocused = document.activeElement && ['detail-bid-input', 'product-chat-input'].includes(document.activeElement.id);
+            if (activeDetailId && detailPageVisible && !detailInputFocused) {
                 await showDetails(activeDetailId);
             }
         }
@@ -924,7 +871,7 @@
                     <div onclick="showDetails(${p.id})" class="bg-white rounded-2xl shadow-sm hover:shadow-xl transition-all border border-gray-100 overflow-hidden cursor-pointer relative group">
                         ${statusBadge}
                         ${p.isFeatured ? '<div class="absolute top-20 left-2 z-10 bg-indigo-900 text-white px-2 py-1 rounded-lg text-[9px] font-black shadow"><i class="fa-solid fa-star mr-1"></i>Öne çıkan</div>' : ''}
-                        ${appState.isAuthenticated ? `<button onclick="toggleFavorite(event, ${p.id})" class="absolute top-8 right-2 z-20 ${p.isFavorite ? 'bg-red-500 text-white' : 'bg-white/90 text-gray-500'} hover:bg-red-500 hover:text-white w-8 h-8 rounded-full shadow transition" title="Favori"><i class="fa-solid fa-heart text-xs"></i></button>` : ''}
+                        ${appState.isAuthenticated ? `<button onclick="toggleFavorite(event, ${p.id})" class="absolute top-11 right-2 z-10 ${p.isFavorite ? 'bg-red-500 text-white' : 'bg-white/90 text-gray-500'} hover:bg-red-500 hover:text-white w-9 h-9 rounded-full shadow transition" title="Favori"><i class="fa-solid fa-heart"></i></button>` : ''}
                         <div class="absolute top-2 left-2 z-10 bg-black/70 text-white px-2 py-1 rounded-lg text-[10px] font-bold">
                             <span class="timer-display" data-id="${p.id}" data-endtime="${p.endTime}">
     ${getRemainingTime(p.endTime)}
@@ -1027,7 +974,7 @@
                     ` : `
                         <div class="mb-3 bg-indigo-50 p-4 rounded-xl border border-indigo-100 text-center">
                             <p class="text-sm font-black text-indigo-900">İlanınızı öne çıkarmak ister misiniz?</p>
-                            <p class="text-[11px] font-bold text-indigo-700 mt-1">Başlangıç: ${Number(siteSettings.featured_price || 0).toLocaleString()} TL. İstek admin onayına gönderilir.</p>
+                            <p class="text-[11px] font-bold text-indigo-700 mt-1">İstek admin onayına gönderilir.</p>
                             <button onclick="requestProductFeatured(${p.id})" class="mt-3 bg-indigo-900 hover:bg-black text-white px-4 py-2 rounded-xl text-xs font-black transition"><i class="fa-solid fa-star mr-2"></i>Öne çıkarma isteği gönder</button>
                         </div>
                     `;
@@ -1088,17 +1035,6 @@
                             <input id="edit-product-exchange-${p.id}" type="checkbox" ${p.exchangeOpen ? 'checked' : ''} class="h-4 w-4 accent-orange-600">
                             Takasa açık
                         </label>
-                        <div class="mb-2 rounded-xl bg-white/80 border border-indigo-100 p-3">
-                            <div class="flex items-center justify-between gap-2 mb-2">
-                                <p class="text-[10px] font-black text-indigo-900 uppercase">Fotoğraflar</p>
-                                <label class="bg-indigo-900 text-white px-3 py-2 rounded-lg text-[10px] font-black cursor-pointer">
-                                    <i class="fa-solid fa-image mr-1"></i>Foto Ekle
-                                    <input id="edit-product-image-input-${p.id}" type="file" accept="image/*" multiple class="hidden" onchange="handleEditProductImageFiles(${p.id}, this)">
-                                </label>
-                            </div>
-                            <div id="edit-product-images-${p.id}" class="grid grid-cols-3 gap-2"></div>
-                            <p id="edit-product-image-error-${p.id}" class="hidden text-[11px] text-red-600 font-bold mt-2"></p>
-                        </div>
                         <button onclick="saveOwnProductEdit(${p.id})" class="bg-indigo-900 text-white px-3 py-2 rounded-lg text-[10px] font-black">Kaydet</button>
                     </div>
                     <button onclick="showDeleteProductConfirm(${p.id})" class="w-full bg-red-50 hover:bg-red-100 text-red-600 border border-red-200 py-3 rounded-xl font-black text-sm transition"><i class="fa-solid fa-trash-can mr-2"></i>İlanı Sil</button>
@@ -1582,22 +1518,17 @@
             updateMessageBadge(data.messageUnreadCount || 0);
 
             listEl.innerHTML = data.items.length ? data.items.map(item => `
-                <div class="flex items-stretch border-b border-gray-50 ${item.is_read ? 'opacity-70' : ''}">
-                    <button onclick="${item.type === 'private_message' ? 'openMessagesFromNotification()' : `openNotificationProduct(${item.product_id || 'null'})`}" class="flex-1 text-left p-4 hover:bg-orange-50 transition">
-                        <div class="flex items-start gap-3">
-                            <span class="mt-1 ${item.is_read ? 'bg-gray-200 text-gray-500' : item.type === 'exchange' ? 'bg-indigo-100 text-indigo-700' : item.type === 'admin' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-600'} w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid ${item.type === 'chat' ? 'fa-comment' : item.type === 'bid' ? 'fa-gavel' : item.type === 'exchange' ? 'fa-right-left' : item.type === 'admin' ? 'fa-user-shield' : 'fa-bell'} text-xs"></i></span>
-                            <span class="flex-1">
-                                <span class="block text-xs font-black text-gray-800">${escapeHtml(item.title)}</span>
-                                <span class="block text-[11px] text-gray-500 mt-1">${escapeHtml(item.message)}</span>
-                                <span class="inline-flex items-center gap-1 text-[9px] font-black text-gray-400 mt-2 uppercase">${escapeHtml(item.type || 'info')}</span>
-                                <span class="block text-[10px] text-gray-400 mt-1">${item.created_at}</span>
-                            </span>
-                        </div>
-                    </button>
-                    <button onclick="deleteNotification(event, ${item.id})" class="w-11 text-red-500 hover:bg-red-50 hover:text-red-700 transition" title="Bildirimi sil">
-                        <i class="fa-solid fa-trash-can text-xs"></i>
-                    </button>
-                </div>
+                <button onclick="${item.type === 'private_message' ? 'openMessagesFromNotification()' : `openNotificationProduct(${item.product_id || 'null'})`}" class="w-full text-left p-4 border-b border-gray-50 hover:bg-orange-50 transition ${item.is_read ? 'opacity-70' : ''}">
+                    <div class="flex items-start gap-3">
+                        <span class="mt-1 ${item.is_read ? 'bg-gray-200 text-gray-500' : item.type === 'exchange' ? 'bg-indigo-100 text-indigo-700' : item.type === 'admin' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-600'} w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid ${item.type === 'chat' ? 'fa-comment' : item.type === 'bid' ? 'fa-gavel' : item.type === 'exchange' ? 'fa-right-left' : item.type === 'admin' ? 'fa-user-shield' : 'fa-bell'} text-xs"></i></span>
+                        <span class="flex-1">
+                            <span class="block text-xs font-black text-gray-800">${escapeHtml(item.title)}</span>
+                            <span class="block text-[11px] text-gray-500 mt-1">${escapeHtml(item.message)}</span>
+                            <span class="inline-flex items-center gap-1 text-[9px] font-black text-gray-400 mt-2 uppercase">${escapeHtml(item.type || 'info')}</span>
+                            <span class="block text-[10px] text-gray-400 mt-1">${item.created_at}</span>
+                        </span>
+                    </div>
+                </button>
             `).join('') : '<p class="p-6 text-center text-xs text-gray-400 italic">Bildirim yok.</p>';
         }
 
@@ -1616,29 +1547,6 @@
         async function markNotificationsRead() {
             await fetch('/api/notifications/read', { method: 'POST' });
             await loadNotifications();
-        }
-
-        async function deleteAllNotifications() {
-            const response = await fetch('/api/notifications', { method: 'DELETE' });
-            const result = await response.json();
-            if (result.success) {
-                await loadNotifications();
-                showScreenNotice('Bildirimler silindi');
-            } else {
-                showScreenNotice(result.message || 'Bildirimler silinemedi', 'error');
-            }
-        }
-
-        async function deleteNotification(event, notificationId) {
-            event.stopPropagation();
-            const response = await fetch(`/api/notifications/${notificationId}`, { method: 'DELETE' });
-            const result = await response.json();
-            if (result.success) {
-                await loadNotifications();
-                showScreenNotice('Bildirim silindi');
-            } else {
-                showScreenNotice(result.message || 'Bildirim silinemedi', 'error');
-            }
         }
 
         async function openNotificationProduct(productId) {
@@ -2347,15 +2255,15 @@
                     <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
                         <div class="rounded-xl bg-white border border-gray-100 p-3">
                             <p class="text-[9px] font-black text-gray-400 uppercase"><i class="fa-solid fa-phone mr-1 text-orange-500"></i>Telefon</p>
-                            <p class="text-xs font-black text-gray-500 mt-1 break-words">${escapeHtml(siteSettings.support_phone || 'Yakında')}</p>
+                            <p class="text-xs font-black text-gray-500 mt-1">Yakında</p>
                         </div>
                         <div class="rounded-xl bg-white border border-gray-100 p-3">
                             <p class="text-[9px] font-black text-gray-400 uppercase"><i class="fa-solid fa-envelope mr-1 text-orange-500"></i>Mail</p>
-                            <p class="text-xs font-black text-gray-500 mt-1 break-words">${escapeHtml(siteSettings.support_email || 'Yakında')}</p>
+                            <p class="text-xs font-black text-gray-500 mt-1">Yakında</p>
                         </div>
                         <div class="rounded-xl bg-white border border-gray-100 p-3">
                             <p class="text-[9px] font-black text-gray-400 uppercase"><i class="fa-brands fa-instagram mr-1 text-orange-500"></i>Instagram</p>
-                            <p class="text-xs font-black text-gray-500 mt-1 break-words">${escapeHtml(siteSettings.support_instagram || 'Yakında')}</p>
+                            <p class="text-xs font-black text-gray-500 mt-1">Yakında</p>
                         </div>
                     </div>
                 </div>
@@ -2363,21 +2271,10 @@
         }
 
         function getOrderStage(order) {
-            const shipping = order.saleProgress && order.saleProgress.shipping_status;
-            if (order.status === 'completed' && shipping) {
-                const shippingStages = {
-                    hazirlaniyor: { label: 'Hazırlanıyor', color: 'bg-blue-50 text-blue-700 border-blue-100', icon: 'fa-box-open' },
-                    kargoda: { label: 'Kargoda', color: 'bg-orange-50 text-orange-700 border-orange-100', icon: 'fa-truck-fast' },
-                    teslim_edildi: { label: 'Teslim edildi', color: 'bg-green-50 text-green-700 border-green-100', icon: 'fa-circle-check' },
-                    iptal: { label: 'İptal', color: 'bg-red-50 text-red-700 border-red-100', icon: 'fa-circle-xmark' }
-                };
-                if (shippingStages[shipping]) return shippingStages[shipping];
-            }
             const stages = {
                 pending_bidder_action: { label: 'Onay bekliyor', color: 'bg-blue-50 text-blue-700 border-blue-100', icon: 'fa-circle-question' },
                 seller_info_confirmation: { label: 'Satıcı bilgileri onaylıyor', color: 'bg-orange-50 text-orange-700 border-orange-100', icon: 'fa-user-check' },
-                completed: { label: 'Satın alma tamamlandı', color: 'bg-green-50 text-green-700 border-green-100', icon: 'fa-circle-check' },
-                cancelled: { label: 'İptal edildi', color: 'bg-red-50 text-red-700 border-red-100', icon: 'fa-circle-xmark' }
+                completed: { label: 'Satın alma tamamlandı', color: 'bg-green-50 text-green-700 border-green-100', icon: 'fa-circle-check' }
             };
             return stages[order.status] || { label: order.statusLabel || 'Takipte', color: 'bg-gray-50 text-gray-700 border-gray-100', icon: 'fa-clock' };
         }
@@ -2567,93 +2464,18 @@
         }
 
         function toggleEditProductBox(productId) {
-            const box = document.getElementById(`edit-product-box-${productId}`);
-            if (!box) return;
-            box.classList.toggle('hidden');
-            if (!box.classList.contains('hidden')) initEditProductImages(productId);
-        }
-
-        function initEditProductImages(productId) {
-            const product = productsData.find(item => item.id === productId);
-            if (!product) return;
-            editProductImageState[productId] = (product.imgs && product.imgs.length ? product.imgs : [product.img]).filter(Boolean);
-            renderEditProductImages(productId);
-        }
-
-        function setEditProductImageError(productId, message = '') {
-            const error = document.getElementById(`edit-product-image-error-${productId}`);
-            if (!error) return;
-            error.textContent = message;
-            error.classList.toggle('hidden', !message);
-        }
-
-        function renderEditProductImages(productId) {
-            const container = document.getElementById(`edit-product-images-${productId}`);
-            if (!container) return;
-            const images = editProductImageState[productId] || [];
-            container.innerHTML = images.map((image, index) => `
-                <div class="relative rounded-xl overflow-hidden border border-indigo-100 bg-white aspect-square">
-                    <img src="${escapeHtml(image)}" class="w-full h-full object-cover">
-                    <button onclick="removeEditProductImage(${productId}, ${index})" class="absolute top-1 right-1 bg-red-600 hover:bg-red-700 text-white w-7 h-7 rounded-full text-[10px] shadow" title="Fotoğrafı sil"><i class="fa-solid fa-xmark"></i></button>
-                    ${index === 0 ? '<span class="absolute left-1 bottom-1 bg-black/60 text-white px-1.5 py-0.5 rounded text-[8px] font-black">Ana</span>' : ''}
-                </div>
-            `).join('') || '<p class="col-span-3 text-[11px] text-red-600 font-bold bg-red-50 rounded-lg p-2">En az 1 fotoğraf eklemelisiniz.</p>';
-            setEditProductImageError(productId, '');
-        }
-
-        function removeEditProductImage(productId, index) {
-            const images = editProductImageState[productId] || [];
-            images.splice(index, 1);
-            editProductImageState[productId] = images;
-            renderEditProductImages(productId);
-        }
-
-        async function handleEditProductImageFiles(productId, input) {
-            const files = Array.from(input.files || []);
-            input.value = '';
-            if (!files.length) return;
-
-            const images = editProductImageState[productId] || [];
-            const remainingSlots = siteSettings.max_images - images.length;
-            if (remainingSlots <= 0) {
-                setEditProductImageError(productId, `En fazla ${siteSettings.max_images} fotoğraf ekleyebilirsiniz.`);
-                return;
-            }
-
-            const selectedFiles = files.slice(0, remainingSlots);
-            if (selectedFiles.some(file => !file.type.startsWith('image/'))) {
-                setEditProductImageError(productId, 'Sadece fotoğraf dosyası ekleyebilirsiniz.');
-                return;
-            }
-
-            const encodedImages = await Promise.all(selectedFiles.map(readImageFile));
-            editProductImageState[productId] = images.concat(encodedImages);
-            renderEditProductImages(productId);
-            if (files.length > remainingSlots) {
-                setEditProductImageError(productId, `Sadece ${remainingSlots} fotoğraf daha eklenebildi.`);
-            }
+            document.getElementById(`edit-product-box-${productId}`)?.classList.toggle('hidden');
         }
 
         async function saveOwnProductEdit(productId) {
-            const images = editProductImageState[productId];
-            if (Array.isArray(images) && images.length === 0) {
-                setEditProductImageError(productId, 'İlanda en az 1 fotoğraf olmalıdır.');
-                return;
-            }
-            if (Array.isArray(images) && images.length > siteSettings.max_images) {
-                setEditProductImageError(productId, `En fazla ${siteSettings.max_images} fotoğraf ekleyebilirsiniz.`);
-                return;
-            }
-            const payload = {
-                title: document.getElementById(`edit-product-title-${productId}`).value,
-                description: document.getElementById(`edit-product-desc-${productId}`).value,
-                exchangeOpen: document.getElementById(`edit-product-exchange-${productId}`).checked
-            };
-            if (Array.isArray(images)) payload.images = images;
             const response = await fetch(`/api/edit_product/${productId}`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(payload)
+                body: JSON.stringify({
+                    title: document.getElementById(`edit-product-title-${productId}`).value,
+                    description: document.getElementById(`edit-product-desc-${productId}`).value,
+                    exchangeOpen: document.getElementById(`edit-product-exchange-${productId}`).checked
+                })
             });
             const result = await response.json();
             if (result.success) {
@@ -2751,42 +2573,14 @@
             const nav = document.getElementById('sidebar-nav');
             let html = `<div onclick="selectCategory(this, 'Tümü'); toggleSidebar();" class="p-3 cursor-pointer rounded-lg bg-orange-100 text-orange-700 font-bold mb-2"><i class="fa-solid fa-border-all mr-3"></i> Tüm İlanlar <span class="cat-count" id="side-count-Tümü"></span></div>`;
             Object.keys(categoryData).forEach(cat => {
-                const items = categoryData[cat] || [];
-                if (!items.length) return;
-                const icon = items[0].icon || 'fa-tags';
-                html += `<div class="group"><div onclick="toggleSubmenu(this)" class="p-3 hover:bg-gray-50 cursor-pointer rounded flex justify-between items-center text-gray-700 font-semibold"><span><i class="fa-solid ${icon} mr-4 text-orange-600"></i>${escapeHtml(cat)}</span><i class="fa-solid fa-chevron-down text-xs rotate-icon"></i></div><ul class="submenu bg-gray-50/50">${items.map(b => `<li onclick="selectCategory(this, '${escapeJs(b.name)}', true); toggleSidebar();" class="p-2 hover:bg-orange-50 cursor-pointer pl-12 text-sm text-gray-600">${escapeHtml(b.name)} <span class="cat-count" id="side-count-${encodeURIComponent(String(b.name)).replace(/[^a-zA-Z0-9_-]/g, '')}"></span></li>`).join('')}</ul></div>`;
+                const icon = categoryData[cat][0].icon;
+                html += `<div class="group"><div onclick="toggleSubmenu(this)" class="p-3 hover:bg-gray-50 cursor-pointer rounded flex justify-between items-center text-gray-700 font-semibold"><span><i class="fa-solid ${icon} mr-4 text-orange-600"></i>${cat}</span><i class="fa-solid fa-chevron-down text-xs rotate-icon"></i></div><ul class="submenu bg-gray-50/50">${categoryData[cat].map(b => `<li onclick="selectCategory(this, '${b.name}', true); toggleSidebar();" class="p-2 hover:bg-orange-50 cursor-pointer pl-12 text-sm text-gray-600">${b.name} <span class="cat-count" id="side-count-${b.name.replace(/\s/g, '')}"></span></li>`).join('')}</ul></div>`;
             });
             nav.innerHTML = html;
         }
-        function initModalCategories() {
-            const s = document.getElementById('new-cat');
-            s.innerHTML = '';
-            Object.keys(categoryData).forEach(c => {
-                const option = document.createElement('option');
-                option.value = c;
-                option.textContent = c;
-                s.appendChild(option);
-            });
-            updateSubCategories();
-        }
-        function updateSubCategories() {
-            const c = document.getElementById('new-cat').value;
-            const s = document.getElementById('new-brand');
-            s.innerHTML = '';
-            (categoryData[c] || []).forEach(b => {
-                const option = document.createElement('option');
-                option.value = b.name;
-                option.textContent = b.name;
-                option.dataset.max = b.maxPrice || 100000;
-                s.appendChild(option);
-            });
-            showBrandLimit();
-        }
-        function showBrandLimit() {
-            const s = document.getElementById('new-brand');
-            if (!s.options.length) return;
-            const m = s.options[s.selectedIndex].dataset.max;
-        }
+        function initModalCategories() { const s = document.getElementById('new-cat'); Object.keys(categoryData).forEach(c => s.innerHTML += `<option value="${c}">${c}</option>`); updateSubCategories(); }
+        function updateSubCategories() { const c = document.getElementById('new-cat').value; const s = document.getElementById('new-brand'); s.innerHTML = ''; categoryData[c].forEach(b => s.innerHTML += `<option value="${b.name}" data-max="${b.maxPrice}">${b.name}</option>`); showBrandLimit(); }
+        function showBrandLimit() { const s = document.getElementById('new-brand'); const m = s.options[s.selectedIndex].dataset.max; }
         function handleOneLiraOption(c) { const i = document.getElementById('new-price'); if(c.checked) { i.value = 1; i.min = 1; i.max = 1; i.readOnly = true; } else { i.value = ""; i.removeAttribute('max'); i.min = 1; i.readOnly = false; } }
         function normalizeListingDuration(value) {
             const allowed = ['1', '7', '30', '90', '180'];
