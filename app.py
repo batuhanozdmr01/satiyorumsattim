@@ -40,6 +40,8 @@ app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'cok-gizli-bir-anahtar-1
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///goktug.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {'connect_args': {'timeout': 30}}
+app.json.sort_keys = False
+app.jinja_env.policies['json.dumps_kwargs'] = {'sort_keys': False}
 
 db = SQLAlchemy(app)
 login_manager = LoginManager()
@@ -253,7 +255,7 @@ class Report(db.Model):
 
 class SiteSetting(db.Model):
     key = db.Column(db.String(80), primary_key=True)
-    value = db.Column(db.String(300), nullable=False)
+    value = db.Column(db.Text, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class Announcement(db.Model):
@@ -606,6 +608,12 @@ def get_default_category_menu():
     }
 
 def normalize_category_menu(menu):
+    if isinstance(menu, list):
+        menu = {
+            str(entry.get('name') or '').strip(): entry.get('items') or []
+            for entry in menu
+            if isinstance(entry, dict)
+        }
     if not isinstance(menu, dict):
         return None
     normalized = {}
@@ -642,6 +650,21 @@ def get_category_menu():
         try:
             menu = normalize_category_menu(json.loads(setting.value))
             if menu:
+                order_setting = SiteSetting.query.get("category_menu_order_json")
+                if order_setting and order_setting.value:
+                    try:
+                        order = json.loads(order_setting.value)
+                        if isinstance(order, list):
+                            ordered_menu = {}
+                            for category_name in order:
+                                if category_name in menu:
+                                    ordered_menu[category_name] = menu[category_name]
+                            for category_name, items in menu.items():
+                                if category_name not in ordered_menu:
+                                    ordered_menu[category_name] = items
+                            return ordered_menu
+                    except (TypeError, ValueError, json.JSONDecodeError):
+                        pass
                 return menu
         except (TypeError, ValueError, json.JSONDecodeError):
             pass
@@ -3117,13 +3140,15 @@ def save_category_menu():
     if not is_admin_user():
         return jsonify({"success": False}), 403
     data = request.json or {}
-    menu = normalize_category_menu(data.get('menu'))
+    raw_menu = data.get('menu_entries') if data.get('menu_entries') is not None else data.get('menu')
+    menu = normalize_category_menu(raw_menu)
     if not menu:
         return jsonify({"success": False, "message": "En az bir kategori ve alt kategori girmelisiniz."}), 400
     update_site_setting("category_menu_json", json.dumps(menu, ensure_ascii=False))
+    update_site_setting("category_menu_order_json", json.dumps(list(menu.keys()), ensure_ascii=False))
     log_admin_action("Kategori menüsü güncellendi", "settings", None, f"{len(menu)} kategori")
     db.session.commit()
-    return jsonify({"success": True, "menu": menu})
+    return jsonify({"success": True, "menu": get_category_menu()})
 
 @app.route('/api/admin/category_menu/reset', methods=['POST'])
 @login_required
@@ -3133,6 +3158,9 @@ def reset_category_menu():
     setting = SiteSetting.query.get("category_menu_json")
     if setting:
         db.session.delete(setting)
+    order_setting = SiteSetting.query.get("category_menu_order_json")
+    if order_setting:
+        db.session.delete(order_setting)
     log_admin_action("Kategori menüsü varsayılana alındı", "settings", None, None)
     db.session.commit()
     return jsonify({"success": True, "menu": get_default_category_menu()})

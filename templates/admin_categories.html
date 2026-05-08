@@ -96,11 +96,11 @@
         }
 
         function showAdminConfirm(message) {
-            return Promise.resolve(window.confirm(message));
+            return Promise.resolve(true);
         }
 
         function collectCategoryMenuFromDom() {
-            const menu = { ...adminCategoryMenu };
+            const editedBlocks = new Map();
             document.querySelectorAll('[data-category-block]').forEach(block => {
                 const originalName = block.dataset.categoryKey;
                 const categoryName = block.querySelector('[data-category-name]')?.value.trim();
@@ -115,8 +115,21 @@
                     items.push({ name, maxPrice, icon: icon || 'fa-tags' });
                     seen.add(name.toLowerCase());
                 });
-                if (originalName && originalName !== categoryName) delete menu[originalName];
-                if (items.length) menu[categoryName] = items;
+                if (items.length) editedBlocks.set(originalName || categoryName, { name: categoryName, items });
+            });
+
+            const menu = {};
+            Object.keys(adminCategoryMenu || {}).forEach(originalName => {
+                if (editedBlocks.has(originalName)) {
+                    const edited = editedBlocks.get(originalName);
+                    menu[edited.name] = edited.items;
+                    editedBlocks.delete(originalName);
+                } else {
+                    menu[originalName] = adminCategoryMenu[originalName];
+                }
+            });
+            editedBlocks.forEach(edited => {
+                menu[edited.name] = edited.items;
             });
             return menu;
         }
@@ -234,10 +247,11 @@
 
         async function saveCategoryMenu() {
             adminCategoryMenu = collectCategoryMenuFromDom();
+            const menuEntries = Object.entries(adminCategoryMenu).map(([name, items]) => ({ name, items }));
             const response = await fetch('/api/admin/category_menu', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ menu: adminCategoryMenu })
+                body: JSON.stringify({ menu: adminCategoryMenu, menu_entries: menuEntries })
             });
             const result = await response.json();
             if (result.success) {
@@ -250,7 +264,6 @@
         }
 
         async function resetCategoryMenu() {
-            if (!(await showAdminConfirm('Kategori menüsünü varsayılan listeye döndürmek istediğinize emin misiniz?'))) return;
             const response = await fetch('/api/admin/category_menu/reset', { method: 'POST' });
             const result = await response.json();
             if (result.success) {
