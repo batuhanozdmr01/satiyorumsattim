@@ -1,4 +1,4 @@
-import os
+﻿import os
 import re
 import json
 import csv
@@ -403,20 +403,28 @@ def repair_turkish_mojibake(value):
         return value
 
     text = str(value)
-    for _ in range(3):
-        original = text
-        if any(marker in text for marker in ('Ã', 'Ä', 'Å')):
+    mojibake_markers = ('Ã', 'Ä', 'Å', 'Â', 'Ð', 'ð', 'Þ', 'þ', 'Ý', 'ý', '�', 'â‚º')
+
+    def mojibake_score(candidate):
+        return sum(candidate.count(marker) for marker in mojibake_markers)
+
+    text = text.replace('â‚º', '₺')
+    for _ in range(5):
+        best = text
+        best_score = mojibake_score(text)
+        for encoding in ('cp1254', 'latin1', 'cp1252'):
             try:
-                text = text.encode('latin1').decode('utf-8')
+                candidate = text.encode(encoding).decode('utf-8')
             except (UnicodeEncodeError, UnicodeDecodeError):
-                pass
-        if any(marker in text for marker in ('ý', 'ð', 'þ', 'Ý', 'Ð', 'Þ')):
-            try:
-                text = text.encode('latin1').decode('iso-8859-9')
-            except (UnicodeEncodeError, UnicodeDecodeError):
-                pass
-        if text == original:
+                continue
+            candidate = candidate.replace('â‚º', '₺')
+            score = mojibake_score(candidate)
+            if score < best_score:
+                best = candidate
+                best_score = score
+        if best == text:
             break
+        text = best
     return text
 
 def create_notification(user_id, title, message, notification_type='info', product_id=None):
@@ -469,6 +477,23 @@ def notify_product_watchers(product, sender_id, title=None, message=None, notifi
     sender = User.query.get(sender_id)
     notify_product_owner_message(product, sender)
 
+def notify_favorite_watchers_bid(product, bidder, amount):
+    if not product or not bidder:
+        return
+    favorite_user_ids = {
+        favorite.user_id
+        for favorite in Favorite.query.filter_by(product_id=product.id).all()
+        if favorite.user_id not in {product.owner_id, bidder.id}
+    }
+    for user_id in favorite_user_ids:
+        create_notification(
+            user_id,
+            "Favorindeki ilana teklif geldi",
+            f"{product.title} ilanına {amount} TL teklif yapıldı.",
+            "bid",
+            product.id
+        )
+
 DEFAULT_SITE_SETTINGS = {
     "min_bid": "5",
     "bid_step": "5",
@@ -482,12 +507,15 @@ def get_site_settings():
     settings = DEFAULT_SITE_SETTINGS.copy()
     for setting in SiteSetting.query.all():
         settings[setting.key] = setting.value
+    default_duration_days = int(settings.get("default_duration_days", 7))
+    if default_duration_days not in {1, 7, 30, 90, 180}:
+        default_duration_days = 7
 
     return {
         "min_bid": int(settings.get("min_bid", 5)),
         "bid_step": int(settings.get("bid_step", 5)),
         "chat_spam_seconds": int(settings.get("chat_spam_seconds", 5)),
-        "default_duration_days": int(settings.get("default_duration_days", 7)),
+        "default_duration_days": default_duration_days,
         "max_images": int(settings.get("max_images", 5)),
         "maintenance_mode": settings.get("maintenance_mode", "0") == "1"
     }
@@ -503,10 +531,10 @@ def log_admin_action(action, target_type=None, target_id=None, detail=None):
     admin_id = current_user.id if current_user.is_authenticated else None
     db.session.add(AdminLog(
         admin_id=admin_id,
-        action=action,
+        action=repair_turkish_mojibake(action),
         target_type=target_type,
         target_id=target_id,
-        detail=(detail or "")[:500]
+        detail=repair_turkish_mojibake(detail or "")[:500]
     ))
 
 def calculate_user_risk(user):
@@ -1065,6 +1093,7 @@ def add_bid_to_product(product, user, amount, notification_title="Yeni teklif ge
             "bid",
             product.id
         )
+    notify_favorite_watchers_bid(product, user, amount)
 
 def recalculate_product_bid_state(product):
     top_bid = Bid.query.filter_by(product_id=product.id, is_active=True).order_by(Bid.amount.desc(), Bid.timestamp.asc()).first()
@@ -1152,29 +1181,7 @@ def place_bid():
     if amount > product.max_price:
         return jsonify({"success": False, "message": f"Maksimum teklif sınırı {product.max_price} ₺"}), 400
 
-    # Yeni teklifi kaydet
-    new_bid = Bid(amount=amount, user_id=current_user.id, product_id=product.id, user_name=current_user.name)
-    db.session.add(new_bid)
-    
-    # Ürünün son teklifini ve en yüksek teklif vereni güncelle
-    product.current_bid = amount
-    product.matched_user_id = current_user.id
-
-    create_notification(
-        product.owner_id,
-        "Yeni teklif geldi",
-        f"{current_user.name}, {product.title} ilanına {amount} TL teklif verdi.",
-        "bid",
-        product.id
-    )
-    if False:
-        create_notification(
-            previous_bidder_id,
-            "Teklifiniz geçildi",
-            f"{product.title} ilanında daha yüksek teklif verildi.",
-            "bid",
-            product.id
-        )
+    add_bid_to_product(product, current_user, amount, "Yeni teklif geldi")
     process_auto_bids(product)
     
     db.session.commit()
@@ -1517,6 +1524,16 @@ def get_private_messages(user_id):
             ExchangeOffer.message_id.in_([message.id for message in messages])
         ).all()
     } if messages else {}
+    exchange_product_ids = {
+        product_id
+        for meta in message_meta_map.values()
+        for product_id in (meta.target_product_id, meta.offered_product_id)
+        if product_id
+    }
+    exchange_product_map = {
+        product.id: product
+        for product in Product.query.filter(Product.id.in_(exchange_product_ids)).all()
+    } if exchange_product_ids else {}
     blocked = is_user_blocked_between(current_user.id, partner.id)
     return jsonify({
         "partner": {"id": partner.id, "name": partner.name, "is_blocked": bool(blocked)},
@@ -1530,6 +1547,16 @@ def get_private_messages(user_id):
                 "target_product_id": message_meta_map[message.id].target_product_id,
                 "offered_product_id": message_meta_map[message.id].offered_product_id,
                 "open_product_id": message_meta_map[message.id].offered_product_id or message_meta_map[message.id].target_product_id,
+                "target_product": ({
+                    "id": exchange_product_map[message_meta_map[message.id].target_product_id].id,
+                    "title": exchange_product_map[message_meta_map[message.id].target_product_id].title,
+                    "img": exchange_product_map[message_meta_map[message.id].target_product_id].image_url
+                } if exchange_product_map.get(message_meta_map[message.id].target_product_id) else None),
+                "offered_product": ({
+                    "id": exchange_product_map[message_meta_map[message.id].offered_product_id].id,
+                    "title": exchange_product_map[message_meta_map[message.id].offered_product_id].title,
+                    "img": exchange_product_map[message_meta_map[message.id].offered_product_id].image_url
+                } if exchange_product_map.get(message_meta_map[message.id].offered_product_id) else None),
                 "offer_id": exchange_offer_map[message.id].id if exchange_offer_map.get(message.id) else None,
                 "status": exchange_offer_map[message.id].status if exchange_offer_map.get(message.id) else None,
                 "can_respond": bool(exchange_offer_map.get(message.id) and exchange_offer_map[message.id].receiver_id == current_user.id and exchange_offer_map[message.id].status == 'pending')
@@ -1647,7 +1674,7 @@ def send_exchange_offer():
 def delete_private_conversation(user_id):
     partner = User.query.get(user_id)
     if not partner:
-        return jsonify({"success": False, "message": "KullanÄ±cÄ± bulunamadÄ±."}), 404
+        return jsonify({"success": False, "message": "Kullanıcı bulunamadı."}), 404
     if partner.id == current_user.id:
         return jsonify({"success": False, "message": "Bu sohbet silinemez."}), 400
 
@@ -1793,6 +1820,7 @@ def get_profile():
     can_view_contact = is_admin_user()
     blocked_rows = BlockedUser.query.filter_by(blocker_id=current_user.id).order_by(BlockedUser.created_at.desc()).all()
     user_payload = {
+        "id": current_user.id,
         "name": current_user.name,
         "profile_image": get_user_profile_image_url(current_user.id),
         "location": " / ".join(part for part in (current_user.city, current_user.district, current_user.neighborhood) if part),
@@ -1843,6 +1871,28 @@ def get_profile():
         } for search in db.session.query(SavedSearch).filter_by(user_id=current_user.id, is_active=True).order_by(SavedSearch.created_at.desc()).all()]
     })
 
+@app.route('/api/my_orders', methods=['GET'])
+@login_required
+def get_my_orders():
+    orders = Product.query.filter(
+        Product.matched_user_id == current_user.id,
+        Product.status.in_(['pending_bidder_action', 'seller_info_confirmation', 'completed'])
+    ).order_by(Product.created_at.desc()).all()
+    return jsonify({
+        "success": True,
+        "orders": [{
+            "id": product.id,
+            "title": product.title,
+            "img": product.image_url,
+            "seller": product.owner_name,
+            "currentBid": product.current_bid,
+            "status": product.status,
+            "statusLabel": get_product_status_label(product.status),
+            "createdAt": product.created_at.strftime('%d.%m.%Y'),
+            "saleProgress": serialize_sale_progress(product.id) if product.status == 'completed' else None
+        } for product in orders]
+    })
+
 @app.route('/api/profile/photo', methods=['POST'])
 @login_required
 def update_profile_photo():
@@ -1855,6 +1905,26 @@ def update_profile_photo():
     profile.image_url = image_url
     db.session.commit()
     return jsonify({"success": True, "image_url": image_url})
+
+@app.route('/api/profile/password', methods=['POST'])
+@login_required
+def update_profile_password():
+    data = request.json or {}
+    new_password = str(data.get('newPassword') or '')
+    confirm_password = str(data.get('confirmPassword') or new_password)
+
+    if len(new_password) < 6:
+        return jsonify({"success": False, "message": "Yeni şifre en az 6 karakter olmalıdır."}), 400
+    if len(new_password) > 128:
+        return jsonify({"success": False, "message": "Yeni şifre en fazla 128 karakter olabilir."}), 400
+    if new_password != confirm_password:
+        return jsonify({"success": False, "message": "Yeni şifreler eşleşmiyor."}), 400
+    if check_password_hash(current_user.password, new_password):
+        return jsonify({"success": False, "message": "Yeni şifre mevcut şifreden farklı olmalıdır."}), 400
+
+    current_user.password = generate_password_hash(new_password, method='pbkdf2:sha256')
+    db.session.commit()
+    return jsonify({"success": True, "message": "Şifre güncellendi."})
 
 @app.route('/api/users/<int:user_id>/public_profile', methods=['GET'])
 @login_required
@@ -2213,12 +2283,12 @@ def admin_panel():
     for message in ChatMessage.query.order_by(ChatMessage.timestamp.desc()).limit(100).all():
         messages_data.append({
             "id": message.id,
-            "message": message.message,
+            "message": repair_turkish_mojibake(message.message),
             "user_id": message.user_id,
             "user_name": message.user_name,
             "is_admin": is_admin_user(message.user),
             "product_id": message.product_id,
-            "product_title": message.product.title if message.product else "Silinmiş ilan",
+            "product_title": repair_turkish_mojibake(message.product.title) if message.product else "Silinmiş ilan",
             "timestamp": message.timestamp.strftime('%Y-%m-%d %H:%M'),
             "report_count": Report.query.filter_by(message_id=message.id, status='open').count()
         })
@@ -2266,15 +2336,15 @@ def admin_panel():
         reports_data.append({
             "id": report.id,
             "target_type": report.target_type,
-            "reason": report.reason,
+            "reason": repair_turkish_mojibake(report.reason),
             "status": report.status,
             "created_at": report.created_at.strftime('%Y-%m-%d %H:%M'),
             "reporter_name": reporter.name if reporter else "Silinmiş kullanıcı",
             "reported_user_id": reported_user_id,
             "product_id": report.product_id,
-            "product_title": product.title if product else ("Kullanıcı şikayeti" if report.target_type == 'user' else "Silinmiş ilan"),
+            "product_title": repair_turkish_mojibake(product.title) if product else ("Kullanıcı şikayeti" if report.target_type == 'user' else "Silinmiş ilan"),
             "message_id": report.message_id,
-            "message_text": message.message if message else None
+            "message_text": repair_turkish_mojibake(message.message) if message else None
         })
 
     logs = AdminLog.query.order_by(AdminLog.created_at.desc()).limit(50).all()
@@ -2284,18 +2354,18 @@ def admin_panel():
         logs_data.append({
             "id": log.id,
             "admin_name": admin.name if admin else "Sistem",
-            "action": log.action,
+            "action": repair_turkish_mojibake(log.action),
             "target_type": log.target_type,
             "target_id": log.target_id,
-            "detail": log.detail,
+            "detail": repair_turkish_mojibake(log.detail),
             "created_at": log.created_at.strftime('%Y-%m-%d %H:%M')
         })
 
     announcements = Announcement.query.order_by(Announcement.created_at.desc()).limit(10).all()
     announcements_data = [{
         "id": announcement.id,
-        "title": announcement.title,
-        "message": announcement.message,
+        "title": repair_turkish_mojibake(announcement.title),
+        "message": repair_turkish_mojibake(announcement.message),
         "is_active": announcement.is_active,
         "created_at": announcement.created_at.strftime('%Y-%m-%d %H:%M')
     } for announcement in announcements]
@@ -2307,9 +2377,9 @@ def admin_panel():
         appeals_data.append({
             "id": appeal.id,
             "user_name": user.name if user else "Silinmiş kullanıcı",
-            "message": appeal.message,
+            "message": repair_turkish_mojibake(appeal.message),
             "status": appeal.status,
-            "admin_response": appeal.admin_response,
+            "admin_response": repair_turkish_mojibake(appeal.admin_response),
             "created_at": appeal.created_at.strftime('%Y-%m-%d %H:%M')
         })
 
@@ -2484,7 +2554,7 @@ def update_admin_settings():
         "min_bid": (1, 1000000),
         "bid_step": (1, 1000000),
         "chat_spam_seconds": (1, 120),
-        "default_duration_days": (1, 30),
+        "default_duration_days": (1, 180),
         "max_images": (1, 5)
     }
     for key, (minimum, maximum) in limits.items():
@@ -2494,8 +2564,8 @@ def update_admin_settings():
             return jsonify({"success": False, "message": f"{key} geçerli değil."}), 400
         if value < minimum or value > maximum:
             return jsonify({"success": False, "message": f"{key} {minimum}-{maximum} aralığında olmalıdır."}), 400
-        if key == "default_duration_days" and value not in {1, 3, 7, 14, 30}:
-            return jsonify({"success": False, "message": "Varsayılan ilan süresi 1, 3, 7, 14 veya 30 gün olmalıdır."}), 400
+        if key == "default_duration_days" and value not in {1, 7, 30, 90, 180}:
+            return jsonify({"success": False, "message": "Varsayılan ilan süresi 1 gün, 7 gün, 1 ay, 3 ay veya 6 ay olmalıdır."}), 400
         update_site_setting(key, value)
     update_site_setting("maintenance_mode", "1" if data.get("maintenance_mode") else "0")
     log_admin_action("Site ayarları güncellendi", "settings", None, json.dumps(data, ensure_ascii=False))
@@ -2630,9 +2700,9 @@ def approve_product(product_id):
         return jsonify({"success": False}), 403
     product = Product.query.get(product_id)
     if not product:
-        return jsonify({"success": False, "message": "Ä°lan bulunamadÄ±."}), 404
+        return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
     if product.status != 'pending_admin_approval':
-        return jsonify({"success": False, "message": "Bu ilan admin onayÄ± beklemiyor."}), 400
+        return jsonify({"success": False, "message": "Bu ilan admin onayı beklemiyor."}), 400
 
     moderation = get_product_moderation(product_id)
     original_duration = product.end_time - (product.created_at or datetime.now())
@@ -2644,12 +2714,12 @@ def approve_product(product_id):
     notify_saved_search_matches(product)
     create_notification(
         product.owner_id,
-        "Ä°lan onaylandÄ±",
-        f"{product.title} ilanÄ±nÄ±z yayÄ±na alÄ±ndÄ±.",
+        "İlan onaylandı",
+        f"{product.title} ilanınız yayına alındı.",
         "admin",
         product.id
     )
-    log_admin_action("Ä°lan onaylandÄ±", "product", product_id, product.title)
+    log_admin_action("İlan onaylandı", "product", product_id, product.title)
     db.session.commit()
     return jsonify({"success": True})
 
@@ -2695,6 +2765,32 @@ def toggle_product_featured(product_id):
     db.session.commit()
     return jsonify({"success": True, "is_featured": featured.is_active})
 
+@app.route('/api/request_product_featured/<int:product_id>', methods=['POST'])
+@login_required
+def request_product_featured(product_id):
+    product = Product.query.get(product_id)
+    if not product:
+        return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
+    if product.owner_id != current_user.id:
+        return jsonify({"success": False, "message": "Sadece kendi ilanınız için istek gönderebilirsiniz."}), 403
+    if product.status != 'active':
+        return jsonify({"success": False, "message": "Sadece yayındaki ilanlar öne çıkarılabilir."}), 400
+    if is_featured_product(product.id):
+        return jsonify({"success": False, "message": "Bu ilan zaten öne çıkarılmış."}), 400
+
+    admin_users = [user for user in User.query.filter_by(role='admin').all() if is_admin_user(user)]
+    for admin in admin_users:
+        create_unique_unread_notification(
+            admin.id,
+            "Öne çıkarma isteği",
+            f"{current_user.name}, {product.title} ilanının öne çıkarılmasını istiyor.",
+            "admin",
+            product.id
+        )
+    log_admin_action("Öne çıkarma isteği", "product", product.id, product.title)
+    db.session.commit()
+    return jsonify({"success": True, "message": "Öne çıkarma isteği admin onayına gönderildi."})
+
 @app.route('/api/toggle_product_image_flag/<int:product_id>', methods=['POST'])
 @login_required
 def toggle_product_image_flag(product_id):
@@ -2724,6 +2820,9 @@ def edit_product(product_id):
         return jsonify({"success": False, "message": "Başlık boş olamaz."}), 400
     product.title = title[:200]
     product.description = description[:1000]
+    if 'exchangeOpen' in data:
+        extra = get_product_extra(product.id)
+        extra.exchange_open = bool(data.get('exchangeOpen'))
     if is_admin_user():
         log_admin_action("İlan düzenlendi", "product", product.id, product.title)
     db.session.commit()
@@ -2838,6 +2937,9 @@ def register():
     email = str(data.get('email', '')).strip().lower()
     phone = str(data.get('phone', '')).strip()
 
+    if not data.get('kvkkAccepted'):
+        return jsonify({"success": False, "message": "KVKK aydınlatma metnini onaylamalısınız."}), 400
+
     # E-posta format kontrolü
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
         return jsonify({"success": False, "message": "Geçersiz e-posta formatı"}), 400
@@ -2898,7 +3000,7 @@ def add_product():
         duration_days = int(data.get('durationDays') or data.get('duration') or settings["default_duration_days"])
     except (TypeError, ValueError):
         duration_days = settings["default_duration_days"]
-    duration_days = duration_days if duration_days in {1, 3, 7, 14, 30} else settings["default_duration_days"]
+    duration_days = duration_days if duration_days in {1, 7, 30, 90, 180} else settings["default_duration_days"]
     title = str(data.get('title', '')).strip()
     condition = str(data.get('condition', '')).strip()
     imgs = data.get('images', [])
