@@ -1195,7 +1195,7 @@
                 const riskMatches = !risk
                     || (risk === 'high' && (riskText.includes('ksek') || riskText.includes('yuk')))
                     || (risk === 'medium' && riskText.includes('orta'))
-                    || (risk === 'low' && (riskText.includes('dus') || riskText.includes('düs') || riskText.includes('d��')));
+                    || (risk === 'low' && (riskText.includes('dus') || riskText.includes('düs') || riskText.includes('düş')));
                 const verifyMatches = !verify || (verify === 'phone' && row.dataset.phone === '1');
                 const matches = (!term || text.includes(term))
                     && riskMatches

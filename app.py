@@ -419,12 +419,45 @@ def repair_turkish_mojibake(value):
         return value
 
     text = str(value)
-    mojibake_markers = ('Ã', 'Ä', 'Å', 'Â', 'Ð', 'ð', 'Þ', 'þ', 'Ý', 'ý', '�', 'â‚º')
+    legacy_turkish_map = str.maketrans({
+        'ţ': 'ş',
+        'Ţ': 'Ş',
+        'đ': 'ğ',
+        'Đ': 'Ğ',
+        'þ': 'ş',
+        'Þ': 'Ş',
+        'ý': 'ı',
+        'Ý': 'İ'
+    })
+    mojibake_replacements = {
+        'Ä±': 'ı',
+        'Ä°': 'İ',
+        'ÄŸ': 'ğ',
+        'Äž': 'Ğ',
+        'ÅŸ': 'ş',
+        'Åž': 'Ş',
+        'Ã¼': 'ü',
+        'Ãœ': 'Ü',
+        'Ã¶': 'ö',
+        'Ã–': 'Ö',
+        'Ã§': 'ç',
+        'Ã‡': 'Ç',
+        'â€œ': '"',
+        'â€': '"',
+        'â€™': "'",
+        'â€˜': "'",
+        'â€“': '-',
+        'â€”': '-'
+    }
+    mojibake_markers = ('Ã', 'Ä', 'Å', 'Â', 'Ð', 'ð', 'Þ', 'þ', 'Ý', 'ý', 'ţ', 'Ţ', 'đ', 'Đ', '�', 'â‚º')
 
     def mojibake_score(candidate):
         return sum(candidate.count(marker) for marker in mojibake_markers)
 
     text = text.replace('â‚º', '₺')
+    for bad, good in mojibake_replacements.items():
+        text = text.replace(bad, good)
+    text = text.translate(legacy_turkish_map)
     for _ in range(5):
         best = text
         best_score = mojibake_score(text)
@@ -434,6 +467,9 @@ def repair_turkish_mojibake(value):
             except (UnicodeEncodeError, UnicodeDecodeError):
                 continue
             candidate = candidate.replace('â‚º', '₺')
+            for bad, good in mojibake_replacements.items():
+                candidate = candidate.replace(bad, good)
+            candidate = candidate.translate(legacy_turkish_map)
             score = mojibake_score(candidate)
             if score < best_score:
                 best = candidate
@@ -441,7 +477,7 @@ def repair_turkish_mojibake(value):
         if best == text:
             break
         text = best
-    return text
+    return text.translate(legacy_turkish_map)
 
 def create_notification(user_id, title, message, notification_type='info', product_id=None):
     if not user_id:
