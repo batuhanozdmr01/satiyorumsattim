@@ -10,6 +10,8 @@ import binascii
 import base64
 import uuid
 from functools import lru_cache
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 from flask import Flask, render_template, request, jsonify, session, redirect, url_for, flash, Response
 from flask_sqlalchemy import SQLAlchemy
 from flask_login import LoginManager, UserMixin, login_user, logout_user, login_required, current_user
@@ -93,6 +95,9 @@ class User(UserMixin, db.Model):
     city = db.Column(db.String(100), nullable=True)
     district = db.Column(db.String(100), nullable=True)
     neighborhood = db.Column(db.String(100), nullable=True)
+    address_detail = db.Column(db.String(300), nullable=True)
+    address_privacy = db.Column(db.String(30), default='after_sale')
+    availability_text = db.Column(db.String(200), nullable=True)
     withdraw_count = db.Column(db.Integer, default=0)
     
     products = db.relationship('Product', backref='owner', foreign_keys='Product.owner_id', cascade="all, delete-orphan", lazy=True)
@@ -360,6 +365,8 @@ class SaleProgress(db.Model):
     contact_made = db.Column(db.Boolean, default=False)
     delivered = db.Column(db.Boolean, default=False)
     paid = db.Column(db.Boolean, default=False)
+    buyer_received_confirmed = db.Column(db.Boolean, default=False)
+    seller_payment_confirmed = db.Column(db.Boolean, default=False)
     shipping_status = db.Column(db.String(30), default='hazirlaniyor')
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -789,6 +796,23 @@ def get_user_rating_summary(user_id):
     average = round(sum(rating.score for rating in ratings) / len(ratings), 1)
     return {"count": len(ratings), "average": average}
 
+def get_user_reviews(user_id, limit=8):
+    reviews = []
+    for rating in Rating.query.filter_by(rated_user_id=user_id).order_by(Rating.created_at.desc()).limit(limit).all():
+        rater = User.query.get(rating.rater_id)
+        product = Product.query.get(rating.product_id)
+        reviews.append({
+            "id": rating.id,
+            "score": rating.score,
+            "comment": repair_turkish_mojibake(rating.comment or ""),
+            "raterName": rater.name if rater else "Silinmiş kullanıcı",
+            "raterImage": get_user_profile_image_url(rater.id) if rater else None,
+            "productId": product.id if product else None,
+            "productTitle": repair_turkish_mojibake(product.title) if product else "Silinmiş ilan",
+            "createdAt": rating.created_at.strftime('%d.%m.%Y %H:%M')
+        })
+    return reviews
+
 def get_user_badges(user):
     moderation = UserModeration.query.get(user.id)
     rating = get_user_rating_summary(user.id)
@@ -999,12 +1023,12 @@ def is_product_visible_to_current_user(product):
     if product.status == 'pending_admin_approval':
         if not current_user.is_authenticated:
             return False
-        return is_admin_user() or product.owner_id == current_user.id
+        return can_access_admin_panel() or product.owner_id == current_user.id
     if not moderation or not moderation.is_hidden:
         return True
     if not current_user.is_authenticated:
         return False
-    return is_admin_user() or product.owner_id == current_user.id
+    return can_access_admin_panel() or product.owner_id == current_user.id
 
 def auto_moderate_user(user):
     risk = calculate_user_risk(user)
@@ -1191,12 +1215,62 @@ def ensure_configured_admin():
 
 def ensure_optional_database_columns():
     try:
-        columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(sale_progress)")).fetchall()}
-        if 'shipping_status' not in columns:
+        sale_columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(sale_progress)")).fetchall()}
+        if 'shipping_status' not in sale_columns:
             db.session.execute(text("ALTER TABLE sale_progress ADD COLUMN shipping_status VARCHAR(30) DEFAULT 'hazirlaniyor'"))
-            db.session.commit()
+        if 'buyer_received_confirmed' not in sale_columns:
+            db.session.execute(text("ALTER TABLE sale_progress ADD COLUMN buyer_received_confirmed BOOLEAN DEFAULT 0"))
+        if 'seller_payment_confirmed' not in sale_columns:
+            db.session.execute(text("ALTER TABLE sale_progress ADD COLUMN seller_payment_confirmed BOOLEAN DEFAULT 0"))
+        user_columns = {row[1] for row in db.session.execute(text("PRAGMA table_info(user)")).fetchall()}
+        if 'address_detail' not in user_columns:
+            db.session.execute(text("ALTER TABLE user ADD COLUMN address_detail VARCHAR(300)"))
+        if 'address_privacy' not in user_columns:
+            db.session.execute(text("ALTER TABLE user ADD COLUMN address_privacy VARCHAR(30) DEFAULT 'after_sale'"))
+        if 'availability_text' not in user_columns:
+            db.session.execute(text("ALTER TABLE user ADD COLUMN availability_text VARCHAR(200)"))
+        db.session.commit()
     except OperationalError:
         db.session.rollback()
+
+ADDRESS_API_BASE = "https://www.beterali.com/api/v1"
+
+@lru_cache(maxsize=512)
+def fetch_address_api(endpoint, query_string=""):
+    url = f"{ADDRESS_API_BASE}/{endpoint}"
+    if query_string:
+        url = f"{url}?{query_string}"
+    request_obj = Request(url, headers={"User-Agent": "satiyorum-sattim-address/1.0"})
+    with urlopen(request_obj, timeout=8) as response:
+        return json.loads(response.read().decode("utf-8"))
+
+def first_address_value(item, keys):
+    for key in keys:
+        value = item.get(key)
+        if value is not None and value != "":
+            return value
+    return None
+
+def address_api_items(endpoint, params, collection_keys, code_keys, name_keys):
+    try:
+        payload = fetch_address_api(endpoint, urlencode(params))
+        data = payload.get("data", {})
+        items = []
+        for key in collection_keys:
+            items = data.get(key, [])
+            if items:
+                break
+        return jsonify({
+            "success": True,
+            "source": "beterali",
+            "items": [
+                {"code": first_address_value(item, code_keys), "name": repair_turkish_mojibake(first_address_value(item, name_keys) or "")}
+                for item in items
+                if first_address_value(item, code_keys) is not None and first_address_value(item, name_keys)
+            ]
+        })
+    except Exception:
+        return jsonify({"success": False, "message": "Adres listesi şu an çekilemedi."}), 503
 
 def is_admin_user(user=None):
     user = user or current_user
@@ -1209,6 +1283,16 @@ def is_admin_user(user=None):
 
     return user.role == 'admin'
 
+def is_moderator_user(user=None):
+    user = user or current_user
+    return bool(user and user.is_authenticated and user.role == 'moderator')
+
+def can_access_admin_panel(user=None):
+    return is_admin_user(user) or is_moderator_user(user)
+
+def can_moderate_content(user=None):
+    return can_access_admin_panel(user)
+
 @app.before_request
 def bootstrap_configured_admin():
     if not getattr(app, '_configured_admin_checked', False):
@@ -1217,7 +1301,7 @@ def bootstrap_configured_admin():
         ensure_configured_admin()
         app._configured_admin_checked = True
     if request.method in {'POST', 'DELETE', 'PATCH'} and request.path.startswith('/api/') and request.path != '/api/login':
-        if get_site_settings()["maintenance_mode"] and not is_admin_user():
+        if get_site_settings()["maintenance_mode"] and not can_access_admin_panel():
             return jsonify({"success": False, "message": "Site bakım modunda. Lütfen daha sonra tekrar deneyin."}), 503
 
 @app.route('/api/products', methods=['GET'])
@@ -1279,6 +1363,19 @@ def get_products():
         if current_user.is_authenticated:
             proxy = ProxyBid.query.filter_by(user_id=current_user.id, product_id=p.id, is_active=True).first()
             prod_data["myProxyMax"] = proxy.max_amount if proxy else None
+            can_rate = p.status == 'completed' and current_user.id in {p.owner_id, p.matched_user_id}
+            if can_rate:
+                rated_user_id = p.matched_user_id if current_user.id == p.owner_id else p.owner_id
+                existing_rating = Rating.query.filter_by(
+                    product_id=p.id,
+                    rater_id=current_user.id,
+                    rated_user_id=rated_user_id
+                ).first()
+                prod_data["canRate"] = True
+                prod_data["myRating"] = {
+                    "score": existing_rating.score,
+                    "comment": repair_turkish_mojibake(existing_rating.comment or "")
+                } if existing_rating else None
             if p.status == 'completed' and is_admin_user():
                 seller = User.query.get(p.owner_id)
                 prod_data["seller_info"] = {
@@ -1290,6 +1387,24 @@ def get_products():
         output.append(prod_data)
     output.sort(key=lambda item: (not item.get("isFeatured"), -item.get("createdAt", 0)))
     return jsonify(output)
+
+@app.route('/api/address/cities', methods=['GET'])
+def address_cities():
+    return address_api_items('cities', {}, ['cities'], ['city_code', 'code', 'id'], ['city_name', 'name'])
+
+@app.route('/api/address/districts', methods=['GET'])
+def address_districts():
+    city_code = str(request.args.get('city_code', '')).strip()
+    if not city_code.isdigit():
+        return jsonify({"success": False, "message": "İl seçmelisiniz."}), 400
+    return address_api_items('districts', {"city_code": city_code}, ['districts'], ['district_code', 'districts_code', 'code', 'id'], ['district_name', 'districts_name', 'name'])
+
+@app.route('/api/address/neighborhoods', methods=['GET'])
+def address_neighborhoods():
+    district_code = str(request.args.get('district_code', '')).strip()
+    if not district_code.isdigit():
+        return jsonify({"success": False, "message": "İlçe seçmelisiniz."}), 400
+    return address_api_items('neighbourhoods', {"districts_code": district_code}, ['neighbourhoods', 'neighborhoods'], ['neighbourhood_code', 'neighborhood_code', 'code', 'id'], ['neighbourhood_name', 'neighborhood_name', 'name'])
 
 def validate_bid_amount(product, amount, settings):
     if amount < settings["min_bid"]:
@@ -1577,70 +1692,12 @@ def withdraw_bid(bid_id):
 @app.route('/api/product_messages/<int:product_id>', methods=['GET'])
 @login_required
 def get_product_messages(product_id):
-    product = Product.query.get(product_id)
-    if not product:
-        return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
-    if not is_product_visible_to_current_user(product):
-        return jsonify({"success": False, "message": "İlan yayında değil."}), 404
-
-    messages = ChatMessage.query.filter_by(product_id=product_id).order_by(ChatMessage.timestamp.asc()).limit(100).all()
-    return jsonify([{
-        "id": message.id,
-        "message": message.message,
-        "user_id": message.user_id,
-        "user_name": message.user_name,
-        "is_admin": is_admin_user(message.user),
-        "timestamp": message.timestamp.strftime('%H:%M')
-    } for message in messages])
+    return jsonify({"success": False, "message": "İlan sohbeti kapalı."}), 410
 
 @app.route('/api/product_messages', methods=['POST'])
 @login_required
 def add_product_message():
-    settings = get_site_settings()
-    data = request.json or {}
-    product_id = data.get('product_id')
-    message_text = str(data.get('message', '')).strip()
-
-    product = Product.query.get(product_id)
-    if not product:
-        return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
-
-    if not message_text:
-        return jsonify({"success": False, "message": "Mesaj yazmak zorundasınız."}), 400
-
-    if len(message_text) > 500:
-        return jsonify({"success": False, "message": "Mesaj en fazla 500 karakter olabilir."}), 400
-
-    last_message = ChatMessage.query.filter_by(
-        product_id=product.id,
-        user_id=current_user.id
-    ).order_by(ChatMessage.timestamp.desc()).first()
-    if last_message:
-        seconds_since_last_message = (datetime.utcnow() - last_message.timestamp).total_seconds()
-        if seconds_since_last_message < settings["chat_spam_seconds"]:
-            wait_seconds = max(1, int(settings["chat_spam_seconds"] - seconds_since_last_message))
-            return jsonify({"success": False, "message": f"Spam koruması: {wait_seconds} saniye sonra tekrar yazabilirsiniz."}), 429
-
-    if contains_blocked_chat_text(message_text):
-        return jsonify({"success": False, "message": "Mesajınız uygunsuz kelime içerdiği için gönderilmedi."}), 400
-
-    chat_message = ChatMessage(
-        message=message_text,
-        user_id=current_user.id,
-        product_id=product.id,
-        user_name=current_user.name
-    )
-    db.session.add(chat_message)
-    notify_product_watchers(
-        product,
-        current_user.id,
-        "Yeni sohbet mesajı",
-        f"{product.title} ilanında yeni mesaj var.",
-        "chat"
-    )
-    db.session.commit()
-
-    return jsonify({"success": True})
+    return jsonify({"success": False, "message": "İlan sohbeti kapalı."}), 410
 
 def get_private_conversation_state(user_id, partner_id):
     return PrivateConversationState.query.filter_by(
@@ -2109,6 +2166,7 @@ def get_profile():
             "name": User.query.get(blocked.blocked_id).name if User.query.get(blocked.blocked_id) else "Silinmiş kullanıcı",
             "created_at": blocked.created_at.strftime('%d.%m.%Y %H:%M')
         } for blocked in blocked_rows],
+        "reviews": get_user_reviews(current_user.id, 10),
         "savedSearches": [{
             "id": search.id,
             "name": search.name,
@@ -2225,7 +2283,8 @@ def get_public_user_profile(user_id):
             "location": format_product_location(product),
             "endTime": product.end_time.timestamp() * 1000,
             "statusLabel": get_product_status_label(product.status)
-        } for product in active_products[:8]]
+        } for product in active_products[:8]],
+        "reviews": get_user_reviews(user.id, 8)
     })
 
 @app.route('/api/users/<int:user_id>/trust_details', methods=['GET'])
@@ -2448,17 +2507,17 @@ def index():
     active_announcement = Announcement.query.filter_by(is_active=True).order_by(Announcement.created_at.desc()).first()
     return render_template(
         'index.html',
-        is_current_admin=is_admin_user(),
+        is_current_admin=can_access_admin_panel(),
         site_settings=settings,
         category_data=get_category_menu(),
-        maintenance_mode=settings["maintenance_mode"] and not is_admin_user(),
+        maintenance_mode=settings["maintenance_mode"] and not can_access_admin_panel(),
         active_announcement=active_announcement
     )
 
 @app.route('/admin')
 @login_required
 def admin_panel():
-    if not is_admin_user():
+    if not can_access_admin_panel():
         flash("Admin yetkiniz yok!")
         return redirect(url_for('index'))
 
@@ -2497,6 +2556,8 @@ def admin_panel():
             "profile_image": get_user_profile_image_url(u.id),
             "city": u.city,
             "district": u.district,
+            "neighborhood": u.neighborhood,
+            "address_detail": u.address_detail,
             "role": u.role,
             "is_banned": u.is_banned,
             "risk": risk,
@@ -2702,12 +2763,29 @@ def admin_panel():
         logs_data.append({
             "id": log.id,
             "admin_name": admin.name if admin else "Sistem",
+            "admin_role": admin.role if admin else "system",
+            "admin_id": admin.id if admin else None,
             "action": repair_turkish_mojibake(log.action),
             "target_type": log.target_type,
             "target_id": log.target_id,
             "detail": repair_turkish_mojibake(log.detail),
             "created_at": log.created_at.strftime('%Y-%m-%d %H:%M')
         })
+
+    moderator_performance = []
+    for moderator in User.query.filter_by(role='moderator').order_by(User.name.asc()).all():
+        mod_logs = AdminLog.query.filter_by(admin_id=moderator.id).all()
+        moderator_performance.append({
+            "id": moderator.id,
+            "name": moderator.name,
+            "email": moderator.email,
+            "total": len(mod_logs),
+            "product": sum(1 for log in mod_logs if log.target_type == 'product'),
+            "report": sum(1 for log in mod_logs if log.target_type == 'report'),
+            "user": sum(1 for log in mod_logs if log.target_type == 'user'),
+            "last_action": max((log.created_at for log in mod_logs), default=None).strftime('%Y-%m-%d %H:%M') if mod_logs else "Henüz işlem yok"
+        })
+    moderator_performance.sort(key=lambda item: item["total"], reverse=True)
 
     announcements = Announcement.query.order_by(Announcement.created_at.desc()).limit(10).all()
     announcements_data = [{
@@ -2766,9 +2844,11 @@ def admin_panel():
         announcements=announcements_data,
         appeals=appeals_data,
         logs=logs_data,
+        moderator_performance=moderator_performance,
         featured_requests=featured_requests,
         category_menu=get_category_menu(),
-        can_manage=is_admin_user()
+        can_manage=can_moderate_content(),
+        can_admin_settings=is_admin_user()
     )
 
 @app.route('/admin/categories')
@@ -2788,7 +2868,7 @@ def admin_categories_panel():
 @app.route('/api/ban_user/<int:user_id>', methods=['POST'])
 @login_required
 def ban_user(user_id):
-    if not is_admin_user(): return jsonify({"success": False}), 403
+    if not can_moderate_content(): return jsonify({"success": False}), 403
     user = User.query.get(user_id)
     if user:
         user.ban_until = datetime.now() + timedelta(days=7)
@@ -2800,7 +2880,7 @@ def ban_user(user_id):
 @app.route('/api/unban_user/<int:user_id>', methods=['POST'])
 @login_required
 def unban_user(user_id):
-    if not is_admin_user(): return jsonify({"success": False}), 403
+    if not can_moderate_content(): return jsonify({"success": False}), 403
     user = User.query.get(user_id)
     if user:
         user.ban_until = None
@@ -2812,7 +2892,7 @@ def unban_user(user_id):
 @app.route('/api/admin/quick_search')
 @login_required
 def admin_quick_search():
-    if not is_admin_user():
+    if not can_access_admin_panel():
         return jsonify({"success": False}), 403
     query = str(request.args.get('q', '')).strip()
     if len(query) < 2:
@@ -2851,6 +2931,29 @@ def delete_user(user_id):
         return jsonify({"success": True})
     return jsonify({"success": False}), 404
 
+@app.route('/api/admin/users/<int:user_id>/role', methods=['POST'])
+@login_required
+def update_user_role(user_id):
+    if not is_admin_user():
+        return jsonify({"success": False}), 403
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"success": False, "message": "Kullanıcı bulunamadı."}), 404
+    if user.id == current_user.id:
+        return jsonify({"success": False, "message": "Kendi yetkinizi buradan değiştiremezsiniz."}), 400
+
+    role = str((request.json or {}).get('role') or '').strip()
+    if role not in {'user', 'moderator'}:
+        return jsonify({"success": False, "message": "Geçersiz rol."}), 400
+    if user.role == 'admin':
+        return jsonify({"success": False, "message": "Admin hesabı moderatör panelinden değiştirilemez."}), 400
+
+    old_role = user.role
+    user.role = role
+    log_admin_action("Kullanıcı rolü değişti", "user", user.id, f"{old_role} -> {role}")
+    db.session.commit()
+    return jsonify({"success": True, "role": role})
+
 @app.route('/api/delete_product/<int:product_id>', methods=['DELETE'])
 @login_required
 def delete_product(product_id):
@@ -2858,10 +2961,10 @@ def delete_product(product_id):
     if not product:
         return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
 
-    if not is_admin_user() and product.owner_id != current_user.id:
+    if not can_moderate_content() and product.owner_id != current_user.id:
         return jsonify({"success": False, "message": "Sadece kendi ilanınızı silebilirsiniz."}), 403
 
-    if is_admin_user():
+    if can_moderate_content():
         log_admin_action("İlan silindi", "product", product.id, product.title)
     db.session.delete(product)
     db.session.commit()
@@ -2870,7 +2973,7 @@ def delete_product(product_id):
 @app.route('/api/delete_bid/<int:bid_id>', methods=['DELETE'])
 @login_required
 def delete_bid(bid_id):
-    if not is_admin_user(): return jsonify({"success": False}), 403
+    if not can_moderate_content(): return jsonify({"success": False}), 403
     bid = Bid.query.get(bid_id)
     if bid:
         product = Product.query.get(bid.product_id)
@@ -2886,7 +2989,7 @@ def delete_bid(bid_id):
 @app.route('/api/delete_message/<int:message_id>', methods=['DELETE'])
 @login_required
 def delete_message(message_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     message = ChatMessage.query.get(message_id)
     if message:
@@ -2899,7 +3002,7 @@ def delete_message(message_id):
 @app.route('/api/resolve_report/<int:report_id>', methods=['POST'])
 @login_required
 def resolve_report(report_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     report = Report.query.get(report_id)
     if report:
@@ -2914,7 +3017,7 @@ def resolve_report(report_id):
 @app.route('/api/bulk_resolve_reports', methods=['POST'])
 @login_required
 def bulk_resolve_reports():
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     report_ids = (request.json or {}).get('report_ids', [])
     resolved_count = 0
@@ -2932,7 +3035,7 @@ def bulk_resolve_reports():
 @app.route('/api/admin/report_status/<int:report_id>', methods=['POST'])
 @login_required
 def update_report_status(report_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     report = Report.query.get(report_id)
     if not report:
@@ -2954,7 +3057,7 @@ def update_report_status(report_id):
 @app.route('/api/admin/bulk_products', methods=['POST'])
 @login_required
 def bulk_products_action():
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     data = request.json or {}
     product_ids = [int(product_id) for product_id in data.get('product_ids', []) if str(product_id).isdigit()]
@@ -3002,7 +3105,7 @@ def bulk_products_action():
 @app.route('/api/admin/orders/<int:product_id>', methods=['POST'])
 @login_required
 def update_admin_order(product_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     product = Product.query.get(product_id)
     if not product or not product.matched_user_id:
@@ -3243,7 +3346,7 @@ def toggle_announcement(announcement_id):
 @app.route('/api/admin_note', methods=['POST'])
 @login_required
 def add_admin_note():
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     data = request.json or {}
     note = str(data.get('note', '')).strip()
@@ -3260,7 +3363,7 @@ def add_admin_note():
 @app.route('/api/toggle_chat_ban/<int:user_id>', methods=['POST'])
 @login_required
 def toggle_chat_ban(user_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     user = User.query.get(user_id)
     if not user:
@@ -3280,7 +3383,7 @@ def toggle_chat_ban(user_id):
 @app.route('/api/admin/warn_user/<int:user_id>', methods=['POST'])
 @login_required
 def warn_user(user_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     user = User.query.get(user_id)
     if not user:
@@ -3326,7 +3429,7 @@ def admin_delete_user_profile_photo(user_id):
 @app.route('/api/toggle_product_hidden/<int:product_id>', methods=['POST'])
 @login_required
 def toggle_product_hidden(product_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     product = Product.query.get(product_id)
     if not product:
@@ -3342,7 +3445,7 @@ def toggle_product_hidden(product_id):
 @app.route('/api/approve_product/<int:product_id>', methods=['POST'])
 @login_required
 def approve_product(product_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     product = Product.query.get(product_id)
     if not product:
@@ -3372,7 +3475,7 @@ def approve_product(product_id):
 @app.route('/api/reject_product/<int:product_id>', methods=['POST'])
 @login_required
 def reject_product(product_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     product = Product.query.get(product_id)
     if not product:
@@ -3396,7 +3499,7 @@ def reject_product(product_id):
 @app.route('/api/toggle_product_featured/<int:product_id>', methods=['POST'])
 @login_required
 def toggle_product_featured(product_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     product = Product.query.get(product_id)
     if not product:
@@ -3449,7 +3552,7 @@ def request_product_featured(product_id):
 @app.route('/api/toggle_product_image_flag/<int:product_id>', methods=['POST'])
 @login_required
 def toggle_product_image_flag(product_id):
-    if not is_admin_user():
+    if not can_moderate_content():
         return jsonify({"success": False}), 403
     product = Product.query.get(product_id)
     if not product:
@@ -3466,7 +3569,7 @@ def edit_product(product_id):
     product = Product.query.get(product_id)
     if not product:
         return jsonify({"success": False, "message": "İlan bulunamadı."}), 404
-    if not is_admin_user() and product.owner_id != current_user.id:
+    if not can_moderate_content() and product.owner_id != current_user.id:
         return jsonify({"success": False, "message": "Bu ilanı düzenleyemezsiniz."}), 403
     data = request.json or {}
     title = str(data.get('title', product.title)).strip()
@@ -3493,7 +3596,7 @@ def edit_product(product_id):
             return jsonify({"success": False, "message": "Fotoğraflar kaydedilemedi."}), 400
         product.image_url = saved_images[0]
         product.image_urls = json.dumps(saved_images, ensure_ascii=False)
-    if is_admin_user():
+    if can_moderate_content():
         log_admin_action("İlan düzenlendi", "product", product.id, product.title)
     db.session.commit()
     return jsonify({"success": True, "images": get_product_images(product)})
@@ -3518,11 +3621,19 @@ def rate_sale():
     if score < 1 or score > 5:
         return jsonify({"success": False, "message": "Puan 1-5 arası olmalıdır."}), 400
     existing = Rating.query.filter_by(product_id=product.id, rater_id=current_user.id, rated_user_id=rated_user_id).first()
+    comment = repair_turkish_mojibake(str(data.get('comment', '')).strip())[:300]
     if existing:
         existing.score = score
-        existing.comment = str(data.get('comment', '')).strip()[:300]
+        existing.comment = comment
     else:
-        db.session.add(Rating(product_id=product.id, rater_id=current_user.id, rated_user_id=rated_user_id, score=score, comment=str(data.get('comment', '')).strip()[:300]))
+        db.session.add(Rating(product_id=product.id, rater_id=current_user.id, rated_user_id=rated_user_id, score=score, comment=comment))
+    create_unique_unread_notification(
+        rated_user_id,
+        "Yeni yorum aldınız",
+        f"{current_user.name}, {product.title} işlemi için {score} yıldız verdi.",
+        "rating",
+        product.id
+    )
     db.session.commit()
     return jsonify({"success": True})
 
@@ -3606,6 +3717,10 @@ def register():
     data = request.json or {}
     email = str(data.get('email', '')).strip().lower()
     phone = str(data.get('phone', '')).strip()
+    city = str(data.get('city', '')).strip()
+    district = str(data.get('district', '')).strip()
+    neighborhood = str(data.get('neighborhood', '')).strip()
+    address_detail = str(data.get('addressDetail', '')).strip()
 
     if not data.get('kvkkAccepted'):
         return jsonify({"success": False, "message": "KVKK aydınlatma metnini onaylamalısınız."}), 400
@@ -3618,6 +3733,12 @@ def register():
     if not re.match(r"^05[0-9]{9}$", phone):
         return jsonify({"success": False, "message": "Geçersiz telefon formatı (05xxxxxxxxx)"}), 400
 
+    if not city or not district or not neighborhood:
+        return jsonify({"success": False, "message": "İl, ilçe ve mahalle seçmelisiniz."}), 400
+
+    if len(address_detail) < 10:
+        return jsonify({"success": False, "message": "Sokak, bina, daire gibi detay adresi yazmalısınız."}), 400
+
     if User.query.filter_by(email=email).first():
         return jsonify({"success": False, "message": "Bu e-posta zaten kayıtlı"}), 400
 
@@ -3629,9 +3750,10 @@ def register():
         name=str(data.get('name', '')).strip(),
         password=generate_password_hash(data.get('password'), method='pbkdf2:sha256'),
         phone=phone,
-        city=data.get('city'),
-        district=data.get('district'),
-        neighborhood=data.get('neighborhood')
+        city=city[:100],
+        district=district[:100],
+        neighborhood=neighborhood[:100],
+        address_detail=address_detail[:300]
     )
     db.session.add(new_user)
     db.session.flush()

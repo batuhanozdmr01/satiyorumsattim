@@ -75,9 +75,10 @@
                     <button onclick="toggleSidebar()" class="text-2xl hover:text-orange-950 transition"><i class="fa-solid fa-bars"></i></button>
                     <h1 class="text-2xl font-bold cursor-pointer" onclick="location.reload()">SATIYORUM<span class="text-orange-950">SATTIM</span></h1>
                 </div>
-                <div class="relative flex-1 max-w-md mx-4">
-                    <input type="text" id="search-input" onkeyup="handleSearch()" placeholder="Ürün ara..." class="w-full bg-orange-700 text-white placeholder-orange-200 border-none rounded-lg py-2 px-10 focus:ring-2 focus:ring-orange-300 outline-none transition">
+                <div class="relative flex-1 max-w-md mx-4" data-search-root>
+                    <input type="text" id="search-input" onkeyup="handleSearch()" onfocus="renderSearchSuggestions()" onkeydown="handleSearchKey(event)" placeholder="Ürün ara..." class="w-full bg-orange-700 text-white placeholder-orange-200 border-none rounded-lg py-2 px-10 focus:ring-2 focus:ring-orange-300 outline-none transition">
                     <i class="fa-solid fa-magnifying-glass absolute left-3 top-3 text-orange-200"></i>
+                    <div id="search-suggestions" class="hidden absolute left-0 right-0 top-12 bg-white text-gray-800 rounded-2xl shadow-2xl border border-gray-100 overflow-hidden z-[95]"></div>
                 </div>
                 <div class="flex items-center gap-3">
                     {% if current_user.is_authenticated %}
@@ -109,7 +110,7 @@
                             <span class="text-xs font-black">{{ current_user.name }}</span>
                         </div>
                         {% if is_current_admin %}
-                            <a href="/admin" class="bg-indigo-900 hover:bg-black text-white py-2 px-3 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-user-shield mr-1"></i>Admin Paneli</a>
+                            <a href="/admin" class="bg-indigo-900 hover:bg-black text-white py-2 px-3 rounded-lg text-xs font-bold transition"><i class="fa-solid fa-user-shield mr-1"></i>{{ 'Moderatör Panel' if current_user.role == 'moderator' else 'Admin Paneli' }}</a>
                         {% endif %}
                         <a href="/logout" class="bg-red-500 hover:bg-red-600 text-white py-2 px-3 rounded-lg text-xs font-bold transition">Çıkış</a>
                     {% else %}
@@ -186,12 +187,15 @@
                 <input type="password" id="reg-password-confirm" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none" placeholder="Şifre Tekrar">
                 <input type="text" id="reg-phone" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none" placeholder="Telefon (05xx)">
                 <select id="reg-city" onchange="updateRegDistricts()" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none">
-                    <option value="">Şehir Seçiniz</option>
+                    <option value="">İl Seçiniz</option>
                 </select>
-                <select id="reg-district" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none">
+                <select id="reg-district" onchange="updateRegNeighborhoods()" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none" disabled>
                     <option value="">İlçe Seçiniz</option>
                 </select>
-                <input type="text" id="reg-neighborhood" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none" placeholder="Mahalle">
+                <select id="reg-neighborhood" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none" disabled>
+                    <option value="">Mahalle Seçiniz</option>
+                </select>
+                <textarea id="reg-address-detail" rows="2" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none resize-none" placeholder="Sokak, bina adı/no, kat, daire"></textarea>
                 
                 <div class="bg-gray-50 p-4 rounded-xl border border-gray-100 text-[10px] text-gray-500 max-h-40 overflow-y-auto custom-scrollbar mb-2 space-y-2">
                     <p class="font-bold text-gray-700">KVKK AYDINLATMA VE KULLANICI SORUMLULUK METNİ</p>
@@ -251,20 +255,35 @@
                 </select>
                 <div class="space-y-2">
                     <p class="text-xs font-bold text-gray-500 uppercase">Resimler (En fazla 5 adet)</p>
-                    <!-- Kapak Fotoğrafı -->
-<label for="img-1" class="text-gray-500 text-[10px] mb-2 block">Resim 1 (Kapak)</label>
-
-<!-- Diğer Resimler -->
-                    <input type="file" accept="image/*" required class="new-img-input w-full border p-2 rounded-lg text-xs" id="img-1">
-<input type="file" accept="image/*" class="new-img-input w-full border p-2 rounded-lg text-xs" id="img-2">
-<input type="file" accept="image/*" class="new-img-input w-full border p-2 rounded-lg text-xs" id="img-3">
-<input type="file" accept="image/*" class="new-img-input w-full border p-2 rounded-lg text-xs" id="img-4">
-<input type="file" accept="image/*" class="new-img-input w-full border p-2 rounded-lg text-xs" id="img-5">
-                    <div id="image-preview-list" class="grid grid-cols-5 gap-2 pt-2"></div>
+                    <div class="grid grid-cols-5 gap-2">
+                        {% for index in range(1, 6) %}
+                        <label for="img-{{ index }}" class="relative aspect-square rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 hover:bg-orange-50 hover:border-orange-300 cursor-pointer overflow-hidden transition group">
+                            <span id="upload-slot-preview-{{ index }}" class="absolute inset-0 flex flex-col items-center justify-center text-gray-400 group-hover:text-orange-600">
+                                <i class="fa-solid fa-plus text-xl"></i>
+                            </span>
+                            <input type="file" accept="image/*" {% if index == 1 %}required{% endif %} class="new-img-input hidden" id="img-{{ index }}">
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <div id="image-preview-list" class="hidden"></div>
                 </div>
+                <button onclick="showListingPreview()" class="w-full bg-gray-100 hover:bg-orange-50 text-gray-700 py-3 rounded-lg font-bold transition"><i class="fa-solid fa-eye mr-2"></i>Önizle</button>
                 <button onclick="addListing()" class="w-full bg-orange-600 text-white py-3 rounded-lg font-bold">Yayınla</button>
                 <button onclick="toggleModal('modal-ilan')" class="w-full text-gray-500 font-medium">Vazgeç</button>
             </div>
+        </div>
+    </div>
+
+    <div id="modal-listing-preview" class="fixed inset-0 bg-black/60 hidden flex items-center justify-center z-[108] p-4 backdrop-blur-sm">
+        <div class="bg-white rounded-3xl w-full max-w-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col">
+            <div class="p-6 border-b flex items-center justify-between">
+                <div>
+                    <h2 class="text-2xl font-black text-orange-600">İlan Önizleme</h2>
+                    <p class="text-xs font-bold text-gray-400 mt-1">Yayınlamadan önce ilanın nasıl görüneceğini kontrol et.</p>
+                </div>
+                <button onclick="toggleModal('modal-listing-preview')" class="text-gray-400 hover:text-orange-600"><i class="fa-solid fa-xmark text-2xl"></i></button>
+            </div>
+            <div id="listing-preview-content" class="p-4 sm:p-6 overflow-y-auto custom-scrollbar"></div>
         </div>
     </div>
 
@@ -437,27 +456,121 @@
             "Düzce": ["Akçakoca", "Cumayeri", "Çilimli", "Gölyaka", "Gümüşova", "Kaynaşlı", "Merkez", "Yığılca"]
         };
 
-        function initTurkeyData() {
-            const citySelect = document.getElementById('reg-city');
-            Object.keys(turkeyData).sort().forEach(city => {
+        const addressState = {
+            source: 'fallback',
+            cities: [],
+            districts: new Map(),
+            neighborhoods: new Map()
+        };
+
+        function setSelectOptions(select, items, placeholder) {
+            select.innerHTML = `<option value="">${placeholder}</option>`;
+            items.forEach(item => {
                 const opt = document.createElement('option');
-                opt.value = city;
-                opt.textContent = city;
-                citySelect.appendChild(opt);
+                opt.value = item.name;
+                opt.textContent = item.name;
+                if (item.code) opt.dataset.code = item.code;
+                select.appendChild(opt);
             });
         }
 
-        function updateRegDistricts() {
-            const city = document.getElementById('reg-city').value;
+        function ensureNeighborhoodSelect() {
+            const current = document.getElementById('reg-neighborhood');
+            if (current && current.tagName === 'SELECT') return current;
+            current.outerHTML = `<select id="reg-neighborhood" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none" disabled>
+                <option value="">Mahalle Seçiniz</option>
+            </select>`;
+            return document.getElementById('reg-neighborhood');
+        }
+
+        function ensureNeighborhoodInput() {
+            const current = document.getElementById('reg-neighborhood');
+            if (current && current.tagName === 'INPUT') return current;
+            current.outerHTML = '<input type="text" id="reg-neighborhood" class="w-full border-2 border-gray-100 p-3 rounded-xl outline-none" placeholder="Mahalle">';
+            return document.getElementById('reg-neighborhood');
+        }
+
+        async function fetchAddressItems(url) {
+            const response = await fetch(url);
+            if (!response.ok) throw new Error('Adres verisi alınamadı');
+            const result = await response.json();
+            if (!result.success || !Array.isArray(result.items)) throw new Error(result.message || 'Adres verisi alınamadı');
+            return result.items;
+        }
+
+        function fallbackCities() {
+            return Object.keys(turkeyData).sort((a, b) => a.localeCompare(b, 'tr')).map(city => ({ name: city, code: '' }));
+        }
+
+        async function initTurkeyData() {
+            const citySelect = document.getElementById('reg-city');
+            citySelect.disabled = true;
+            try {
+                addressState.cities = await fetchAddressItems('/api/address/cities');
+                addressState.source = 'internet';
+                setSelectOptions(citySelect, addressState.cities, 'İl Seçiniz');
+            } catch (error) {
+                addressState.cities = fallbackCities();
+                addressState.source = 'fallback';
+                setSelectOptions(citySelect, addressState.cities, 'İl Seçiniz');
+            } finally {
+                citySelect.disabled = false;
+            }
+        }
+
+        async function updateRegDistricts() {
+            const citySelect = document.getElementById('reg-city');
+            const city = citySelect.value;
+            const cityCode = citySelect.selectedOptions[0]?.dataset.code;
             const distSelect = document.getElementById('reg-district');
-            distSelect.innerHTML = '<option value="">İlçe Seçiniz</option>';
-            if (city && turkeyData[city]) {
-                turkeyData[city].sort().forEach(dist => {
-                    const opt = document.createElement('option');
-                    opt.value = dist;
-                    opt.textContent = dist;
-                    distSelect.appendChild(opt);
-                });
+            const neighborhoodSelect = addressState.source === 'internet' ? ensureNeighborhoodSelect() : ensureNeighborhoodInput();
+            setSelectOptions(distSelect, [], 'İlçe Seçiniz');
+            if (neighborhoodSelect.tagName === 'SELECT') setSelectOptions(neighborhoodSelect, [], 'Mahalle Seçiniz');
+            if (neighborhoodSelect.tagName === 'INPUT') neighborhoodSelect.value = '';
+            distSelect.disabled = true;
+            neighborhoodSelect.disabled = true;
+
+            if (!city) return;
+
+            if (addressState.source === 'internet' && cityCode) {
+                distSelect.innerHTML = '<option value="">İlçeler yükleniyor...</option>';
+                try {
+                    if (!addressState.districts.has(cityCode)) {
+                        addressState.districts.set(cityCode, await fetchAddressItems(`/api/address/districts?city_code=${encodeURIComponent(cityCode)}`));
+                    }
+                    setSelectOptions(distSelect, addressState.districts.get(cityCode), 'İlçe Seçiniz');
+                    distSelect.disabled = false;
+                    return;
+                } catch (error) {
+                    addressState.source = 'fallback';
+                }
+            }
+
+            const fallbackDistricts = (turkeyData[city] || []).slice().sort((a, b) => a.localeCompare(b, 'tr')).map(district => ({ name: district, code: '' }));
+            setSelectOptions(distSelect, fallbackDistricts, 'İlçe Seçiniz');
+            distSelect.disabled = fallbackDistricts.length === 0;
+            ensureNeighborhoodInput().disabled = false;
+        }
+
+        async function updateRegNeighborhoods() {
+            const districtSelect = document.getElementById('reg-district');
+            const districtCode = districtSelect.selectedOptions[0]?.dataset.code;
+            const neighborhoodSelect = document.getElementById('reg-neighborhood');
+            if (!neighborhoodSelect || neighborhoodSelect.tagName !== 'SELECT') return;
+
+            setSelectOptions(neighborhoodSelect, [], 'Mahalle Seçiniz');
+            neighborhoodSelect.disabled = true;
+            if (!districtCode || addressState.source !== 'internet') return;
+
+            neighborhoodSelect.innerHTML = '<option value="">Mahalleler yükleniyor...</option>';
+            try {
+                if (!addressState.neighborhoods.has(districtCode)) {
+                    addressState.neighborhoods.set(districtCode, await fetchAddressItems(`/api/address/neighborhoods?district_code=${encodeURIComponent(districtCode)}`));
+                }
+                setSelectOptions(neighborhoodSelect, addressState.neighborhoods.get(districtCode), 'Mahalle Seçiniz');
+                neighborhoodSelect.disabled = false;
+            } catch (error) {
+                ensureNeighborhoodInput().disabled = false;
             }
         }
 
@@ -563,10 +676,9 @@
         let productCardImageIndexes = {};
         let editProductImageState = {};
         let advancedFilters = { minPrice: null, maxPrice: null, location: '' };
-        let productChatPolling = false;
         let privateChatPolling = false;
-        let lastProductChatSignature = '';
         let lastPrivateChatSignature = '';
+        let activeSearchSuggestionIndex = -1;
         const searchAliases = {
             telefon: ['telefon', 'cep telefonu', 'akilli telefon', 'akıllı telefon', 'smartphone', 'phone', 'mobile'],
             bilgisayar: ['bilgisayar', 'laptop', 'notebook', 'masaustu', 'masaüstü', 'pc'],
@@ -581,7 +693,7 @@
         window.onload = async () => {
             initSidebar();
             initModalCategories();
-            initTurkeyData();
+            await initTurkeyData();
             initImagePreview();
             initOutsideCloseHandlers();
             await fetchProducts();
@@ -594,7 +706,7 @@
         };
 
         function initOutsideCloseHandlers() {
-            ['modal-profile', 'modal-messages'].forEach(modalId => {
+            ['modal-profile', 'modal-messages', 'modal-listing-preview'].forEach(modalId => {
                 const modal = document.getElementById(modalId);
                 if (!modal || modal.dataset.outsideCloseReady) return;
                 modal.dataset.outsideCloseReady = '1';
@@ -610,6 +722,12 @@
                 const notificationRoot = event.target.closest('[data-notification-root]');
                 if (!notificationRoot) {
                     document.getElementById('notification-panel')?.classList.add('hidden');
+                }
+
+                const searchRoot = event.target.closest('[data-search-root]');
+                if (!searchRoot) {
+                    document.getElementById('search-suggestions')?.classList.add('hidden');
+                    activeSearchSuggestionIndex = -1;
                 }
             });
         }
@@ -661,10 +779,6 @@
 
         async function pollActiveChats() {
             if (!appState.isAuthenticated) return;
-            const detailPageVisible = !document.getElementById('detail-page').classList.contains('hidden');
-            if (activeDetailId && detailPageVisible && document.getElementById('product-chat-messages')) {
-                await loadProductMessages(activeDetailId, { silent: true });
-            }
             const messagesVisible = !document.getElementById('modal-messages')?.classList.contains('hidden');
             if (messagesVisible) {
                 await refreshPrivateConversations({ preserveOpenMenu: true });
@@ -705,6 +819,7 @@
 
             currentViewData = visibleProducts;
             renderList(currentViewData);
+            renderSearchSuggestions();
         }
 
         function escapeHtml(value) {
@@ -758,6 +873,131 @@
             return termGroups.every(group => group.some(term => haystack.includes(term)));
         }
 
+        function buildSearchSuggestions(query) {
+            const normalizedQuery = normalizeSearchText(query);
+            if (!normalizedQuery) return [];
+            const suggestions = [];
+            const seen = new Set();
+
+            const addSuggestion = (label, type, value, icon, meta = '') => {
+                const cleanLabel = String(label || '').trim();
+                if (!cleanLabel) return;
+                const key = `${type}:${normalizeSearchText(value || cleanLabel)}`;
+                if (seen.has(key)) return;
+                seen.add(key);
+                suggestions.push({ label: cleanLabel, type, value: value || cleanLabel, icon, meta });
+            };
+
+            Object.keys(categoryData).forEach(category => {
+                if (normalizeSearchText(category).includes(normalizedQuery)) {
+                    addSuggestion(category, 'category', category, 'fa-layer-group', 'Kategori');
+                }
+                (categoryData[category] || []).forEach(item => {
+                    if (normalizeSearchText(item.name).includes(normalizedQuery)) {
+                        addSuggestion(item.name, 'brand', item.name, item.icon || 'fa-tag', category);
+                    }
+                });
+            });
+
+            Object.entries(searchAliases).forEach(([label, aliases]) => {
+                const allTerms = [label, ...aliases];
+                if (allTerms.some(term => normalizeSearchText(term).includes(normalizedQuery) || normalizedQuery.includes(normalizeSearchText(term)))) {
+                    addSuggestion(label, 'search', label, 'fa-magnifying-glass', 'Benzer arama');
+                }
+            });
+
+            productsData
+                .filter(product => productMatchesSearch(product, query))
+                .slice(0, 6)
+                .forEach(product => addSuggestion(product.title, 'product', product.id, 'fa-box-open', `${product.currentBid.toLocaleString()} TL`));
+
+            if (!suggestions.some(item => item.type === 'search')) {
+                addSuggestion(query, 'search', query, 'fa-magnifying-glass', 'Ara');
+            }
+            return suggestions.slice(0, 8);
+        }
+
+        function renderSearchSuggestions() {
+            const input = document.getElementById('search-input');
+            const box = document.getElementById('search-suggestions');
+            if (!input || !box) return;
+            const query = input.value.trim();
+            if (!query) {
+                box.classList.add('hidden');
+                activeSearchSuggestionIndex = -1;
+                return;
+            }
+            const suggestions = buildSearchSuggestions(query);
+            if (!suggestions.length) {
+                box.innerHTML = renderEmptyState({
+                    icon: 'fa-magnifying-glass',
+                    title: 'Sonuç bulunamadı',
+                    text: 'Başka bir kelime, kategori veya marka deneyebilirsin.',
+                    compact: true
+                });
+                box.classList.remove('hidden');
+                return;
+            }
+            activeSearchSuggestionIndex = Math.min(activeSearchSuggestionIndex, suggestions.length - 1);
+            box.innerHTML = suggestions.map((item, index) => `
+                <button type="button" data-search-suggestion="${index}" onclick="selectSearchSuggestion('${escapeJs(item.type)}', '${escapeJs(item.value)}', '${escapeJs(item.label)}')" class="w-full text-left px-4 py-3 flex items-center gap-3 hover:bg-orange-50 transition ${index === activeSearchSuggestionIndex ? 'bg-orange-50' : ''}">
+                    <span class="w-9 h-9 rounded-xl bg-orange-50 text-orange-600 flex items-center justify-center shrink-0"><i class="fa-solid ${item.icon} text-xs"></i></span>
+                    <span class="min-w-0">
+                        <span class="block text-xs font-black text-gray-800 truncate">${escapeHtml(item.label)}</span>
+                        <span class="block text-[10px] font-bold text-gray-400 mt-0.5">${escapeHtml(item.meta)}</span>
+                    </span>
+                </button>
+            `).join('');
+            box.classList.remove('hidden');
+        }
+
+        function selectSearchSuggestion(type, value, label) {
+            const input = document.getElementById('search-input');
+            document.getElementById('search-suggestions')?.classList.add('hidden');
+            activeSearchSuggestionIndex = -1;
+            if (type === 'product') {
+                if (input) input.value = label;
+                showDetails(Number(value));
+                return;
+            }
+            if (input) input.value = type === 'search' ? value : label;
+            if (type === 'category') {
+                currentViewMode = { type: 'category', value };
+                document.getElementById('current-category-title').innerText = label;
+            } else if (type === 'brand') {
+                currentViewMode = { type: 'brand', value };
+                document.getElementById('current-category-title').innerText = label;
+            } else {
+                currentViewMode = { type: 'search', value };
+                document.getElementById('current-category-title').innerText = `Arama: ${value}`;
+            }
+            renderCurrentView();
+            showMainPage();
+            document.getElementById('search-suggestions')?.classList.add('hidden');
+        }
+
+        function handleSearchKey(event) {
+            const box = document.getElementById('search-suggestions');
+            if (!box || box.classList.contains('hidden')) return;
+            const items = Array.from(box.querySelectorAll('[data-search-suggestion]'));
+            if (!items.length) return;
+            if (event.key === 'ArrowDown') {
+                event.preventDefault();
+                activeSearchSuggestionIndex = (activeSearchSuggestionIndex + 1) % items.length;
+                renderSearchSuggestions();
+            } else if (event.key === 'ArrowUp') {
+                event.preventDefault();
+                activeSearchSuggestionIndex = (activeSearchSuggestionIndex - 1 + items.length) % items.length;
+                renderSearchSuggestions();
+            } else if (event.key === 'Enter' && activeSearchSuggestionIndex >= 0) {
+                event.preventDefault();
+                items[activeSearchSuggestionIndex]?.click();
+            } else if (event.key === 'Escape') {
+                box.classList.add('hidden');
+                activeSearchSuggestionIndex = -1;
+            }
+        }
+
         function productMatchesAdvancedFilters(p) {
             if (advancedFilters.minPrice !== null && p.currentBid < advancedFilters.minPrice) return false;
             if (advancedFilters.maxPrice !== null && p.currentBid > advancedFilters.maxPrice) return false;
@@ -793,40 +1033,6 @@
                 <div class="flex flex-wrap gap-1">
                     ${shown.map(x => `<span class="bg-gray-100 text-gray-600 text-[10px] font-bold px-2 py-1 rounded-full">${escapeHtml(x.user_name)}</span>`).join('')}
                     ${compact && participants.length > shown.length ? `<span class="bg-orange-50 text-orange-700 text-[10px] font-black px-2 py-1 rounded-full">+${participants.length - shown.length}</span>` : ''}
-                </div>
-            </div>`;
-        }
-
-        function renderProductChat(product) {
-            if (!appState.isAuthenticated) {
-                return `<div class="mt-6 bg-white rounded-3xl shadow-xl border border-gray-100 p-5">
-                    <div class="flex items-center justify-between gap-3">
-                        <div>
-                            <h3 class="text-lg font-black text-gray-800">İlan Sohbeti</h3>
-                            <p class="text-xs text-gray-400 font-bold">Sohbete katılmak için giriş yapın.</p>
-                        </div>
-                        <button onclick="toggleModal('modal-login')" class="bg-orange-600 text-white px-4 py-2 rounded-xl text-xs font-black">Giriş Yap</button>
-                    </div>
-                </div>`;
-            }
-
-            return `<div class="mt-6 bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
-                <div class="p-4 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
-                    <div>
-                        <h3 class="text-lg font-black text-gray-800">İlan Sohbeti</h3>
-                        <p class="text-xs text-gray-400 font-bold">Mesajlar uygunsuz kelime filtresinden geçer.</p>
-                    </div>
-                    <i class="fa-solid fa-comments text-orange-600 text-xl"></i>
-                </div>
-                <div id="product-chat-messages" class="p-4 space-y-3 max-h-64 overflow-y-auto custom-scrollbar">
-                    <p class="text-center text-xs text-gray-400 italic py-6">Mesajlar yükleniyor...</p>
-                </div>
-                <div class="p-4 border-t border-gray-100">
-                    <div class="flex gap-2">
-                        <input id="product-chat-input" type="text" maxlength="500" onkeydown="handleChatKey(event, ${product.id})" class="flex-1 border-2 border-gray-100 rounded-xl px-4 py-3 text-sm font-bold outline-none focus:border-orange-500" placeholder="Mesaj yaz...">
-                        <button onclick="sendProductMessage(${product.id})" class="bg-orange-600 text-white px-5 py-3 rounded-xl font-black text-sm hover:bg-orange-700 transition">Gönder</button>
-                    </div>
-                    <p id="product-chat-error" class="hidden text-[11px] text-red-600 font-bold mt-2 pl-2"></p>
                 </div>
             </div>`;
         }
@@ -891,6 +1097,7 @@
                 city: document.getElementById('reg-city').value,
                 district: document.getElementById('reg-district').value,
                 neighborhood: document.getElementById('reg-neighborhood').value,
+                addressDetail: document.getElementById('reg-address-detail').value,
                 kvkkAccepted: consentChecked
             };
             const response = await fetch('/api/register', {
@@ -902,9 +1109,60 @@
             if (result.success) window.location.reload(); else showScreenNotice(result.message, "error");
         }
 
+        function renderEmptyState({ icon = 'fa-box-open', title = 'Henüz içerik yok', text = 'Birazdan burada görünecek.', action = '', compact = false } = {}) {
+            return `
+                <div class="${compact ? 'p-5' : 'col-span-full py-14 px-4'} text-center">
+                    <div class="${compact ? 'w-12 h-12' : 'w-16 h-16'} mx-auto rounded-2xl bg-orange-50 text-orange-600 flex items-center justify-center">
+                        <i class="fa-solid ${icon} ${compact ? 'text-lg' : 'text-2xl'}"></i>
+                    </div>
+                    <p class="${compact ? 'text-sm' : 'text-base'} font-black text-gray-700 mt-3">${escapeHtml(title)}</p>
+                    <p class="${compact ? 'text-[11px]' : 'text-xs'} text-gray-400 font-bold mt-1">${escapeHtml(text)}</p>
+                    ${action}
+                </div>
+            `;
+        }
+
+        function getCurrentEmptyState() {
+            if (currentViewMode.type === 'search') {
+                return {
+                    icon: 'fa-magnifying-glass',
+                    title: 'Aradığın ilan bulunamadı',
+                    text: 'Ürün adı, kategori, marka veya şehirle tekrar deneyebilirsin.'
+                };
+            }
+            if (currentViewMode.type === 'mine') {
+                return {
+                    icon: 'fa-circle-plus',
+                    title: 'Henüz ilanın yok',
+                    text: 'İlan verdiğinde burada takip edebilirsin.',
+                    action: '<button onclick="openListingModal()" class="mt-4 bg-orange-600 hover:bg-orange-700 text-white px-4 py-2 rounded-xl text-xs font-black transition">İlan Ver</button>'
+                };
+            }
+            if (currentViewMode.type === 'favorites') {
+                return {
+                    icon: 'fa-heart',
+                    title: 'Favori listen boş',
+                    text: 'Beğendiğin ilanları kalp ikonuyla buraya ekleyebilirsin.'
+                };
+            }
+            if (currentViewMode.type === 'my_bids') {
+                return {
+                    icon: 'fa-gavel',
+                    title: 'Henüz teklifin yok',
+                    text: 'Teklif verdiğin ilanlar burada görünecek.'
+                };
+            }
+            return {
+                icon: 'fa-box-open',
+                title: 'İlan bulunamadı',
+                text: 'Filtreleri temizleyip tekrar bakabilirsin.',
+                action: '<button onclick="clearAdvancedFilters()" class="mt-4 bg-gray-100 hover:bg-gray-200 text-gray-700 px-4 py-2 rounded-xl text-xs font-black transition">Filtreleri Temizle</button>'
+            };
+        }
+
         function renderList(products) {
             const container = document.getElementById('product-container');
-            container.innerHTML = products.length ? "" : '<p class="col-span-full text-center text-gray-400 py-10 italic">İlan bulunamadı.</p>';
+            container.innerHTML = products.length ? "" : renderEmptyState(getCurrentEmptyState());
             products.forEach(p => {
                 let statusBadge = `<div class="absolute top-2 right-2 ${p.status === 'active' ? 'bg-green-600' : 'bg-orange-600'} text-white text-[8px] font-bold px-2 py-1 rounded-full z-10 uppercase">${p.statusLabel || p.status}</div>`;
                 const participantsHtml = renderParticipants(p);
@@ -939,7 +1197,6 @@
                                 <span><i class="fa-solid fa-location-dot mr-1"></i>${escapeHtml(p.location || 'Konum yok')}</span>
                                 <span><i class="fa-solid fa-eye mr-1"></i>${p.viewCount || 0}</span>
                                 <span><i class="fa-solid fa-heart mr-1"></i>${p.favoriteCount || 0}</span>
-                                <span><i class="fa-solid fa-comment mr-1"></i>${p.messageCount || 0}</span>
                             </div>
                             <div class="text-right border-t pt-2 mt-2">
                                 ${p.condition ? `<p class="text-[10px] text-gray-400 font-black uppercase">${escapeHtml(p.condition)}</p>` : ''}
@@ -980,7 +1237,6 @@
         async function showDetails(id) {
             const sameDetail = activeDetailId === id;
             activeDetailId = id;
-            if (!sameDetail) lastProductChatSignature = '';
             const p = productsData.find(x => x.id === id);
             if (!p) return showMainPage();
             trackProductView(id);
@@ -1033,9 +1289,10 @@
                     `;
                     actionArea = featurePrompt + `<div class="bg-orange-50 p-4 rounded-xl border border-orange-200 text-center"><p class="text-xs font-bold text-orange-800">Kendi ilanınız. Teklifleri aşağıdan yönetin.</p></div>` + bidsHtml;
                 } else if (!appState.isAuthenticated) {
-                    actionArea = `<div class="bg-orange-50 p-4 rounded-xl border border-orange-200 text-center space-y-3"><p class="text-xs font-bold text-orange-800">Teklif vermek ve sohbeti görmek için giriş yapın.</p><button onclick="toggleModal('modal-login')" class="bg-orange-600 text-white px-4 py-2 rounded-xl text-xs font-black">Giriş Yap</button></div>`;
+                    actionArea = `<div class="bg-orange-50 p-4 rounded-xl border border-orange-200 text-center space-y-3"><p class="text-xs font-bold text-orange-800">Teklif vermek için giriş yapın.</p><button onclick="toggleModal('modal-login')" class="bg-orange-600 text-white px-4 py-2 rounded-xl text-xs font-black">Giriş Yap</button></div>`;
                 } else {
-                    actionArea = `<div class="flex gap-2 mb-6"><div class="flex flex-col w-1/2 gap-1"><input type="number" id="detail-bid-input" min="${siteSettings.min_bid}" step="${siteSettings.bid_step}" placeholder="₺ Gir..." class="w-full rounded-xl p-3 border-2 border-gray-100 font-bold outline-none"><span class="text-[10px] text-gray-400 pl-2">${siteSettings.bid_step} TL ve katları</span><span id="detail-bid-error" class="hidden text-[11px] text-red-600 font-bold pl-2">Fiyat girmek zorundasınız.</span></div><button onclick="placeBid(${p.id})" class="w-1/2 bg-orange-600 text-white font-black py-3 rounded-xl">TEKLİF VER</button></div>` + bidsHtml;
+                    actionArea = `<div class="flex gap-2 mb-3"><div class="flex flex-col w-1/2 gap-1"><input type="number" id="detail-bid-input" min="${siteSettings.min_bid}" step="${siteSettings.bid_step}" placeholder="₺ Gir..." class="w-full rounded-xl p-3 border-2 border-gray-100 font-bold outline-none"><span class="text-[10px] text-gray-400 pl-2">${siteSettings.bid_step} TL ve katları</span><span id="detail-bid-error" class="hidden text-[11px] text-red-600 font-bold pl-2">Fiyat girmek zorundasınız.</span></div><button onclick="placeBid(${p.id})" class="w-1/2 bg-orange-600 text-white font-black py-3 rounded-xl">TEKLİF VER</button></div>
+                    <button onclick="openPrivateChat(${p.owner_id})" class="w-full mb-6 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border border-indigo-100 py-3 rounded-xl text-sm font-black transition"><i class="fa-solid fa-message mr-2"></i>Satıcıya Mesaj At</button>` + bidsHtml;
                 }
             } else if (p.status === 'pending_seller_approval' && currentUserId === p.owner_id) {
                 actionArea = `<div class="bg-orange-50 p-4 rounded-xl border border-orange-200"><p class="text-sm font-bold text-orange-800 mb-3">Teklif geldi! Onaylıyor musunuz?</p><div class="flex gap-2"><button onclick="sellerRespond(${p.id}, 'approve')" class="flex-1 bg-green-600 text-white py-2 rounded-lg font-bold">Onayla</button><button onclick="sellerRespond(${p.id}, 'reject')" class="flex-1 bg-red-600 text-white py-2 rounded-lg font-bold">Reddet</button></div></div>`;
@@ -1121,14 +1378,17 @@
                         ['paid', 'Odeme alindi']
                     ].map(([field, label]) => `<label class="flex items-center gap-2 text-xs font-bold text-green-800 py-1"><input type="checkbox" ${saleProgress[field] ? 'checked' : ''} onchange="updateSaleProgress(${p.id}, '${field}', this.checked)" class="accent-green-700">${label}</label>`).join('')}
                 </div>`;
+            }
+            if (p.canRate) {
                 actionArea += `<div class="mt-3 bg-yellow-50 border border-yellow-100 rounded-xl p-3">
                     <p class="text-xs font-black text-yellow-800 mb-2">Satış sonrası puanlama</p>
-                    <div class="flex gap-2">
+                    ${p.myRating ? `<p class="mb-2 text-[10px] font-bold text-yellow-700 bg-white/70 rounded-lg px-3 py-2">Daha önce ${p.myRating.score} yıldız verdiniz. İsterseniz güncelleyebilirsiniz.</p>` : ''}
+                    <div class="flex flex-col sm:flex-row gap-2">
                         <select id="rating-score-${p.id}" class="border border-yellow-100 rounded-lg px-2 py-2 text-xs">
-                            <option value="5">5 yıldız</option><option value="4">4 yıldız</option><option value="3">3 yıldız</option><option value="2">2 yıldız</option><option value="1">1 yıldız</option>
+                            ${[5,4,3,2,1].map(score => `<option value="${score}" ${p.myRating && p.myRating.score === score ? 'selected' : ''}>${score} yıldız</option>`).join('')}
                         </select>
-                        <input id="rating-comment-${p.id}" class="flex-1 border border-yellow-100 rounded-lg px-2 py-2 text-xs" placeholder="Kısa yorum">
-                        <button onclick="rateSale(${p.id})" class="bg-yellow-500 text-white px-3 py-2 rounded-lg text-[10px] font-black">Puanla</button>
+                        <input id="rating-comment-${p.id}" value="${escapeHtml(p.myRating ? p.myRating.comment : '')}" class="flex-1 border border-yellow-100 rounded-lg px-2 py-2 text-xs" placeholder="Kısa yorum">
+                        <button onclick="rateSale(${p.id})" class="bg-yellow-500 text-white px-3 py-2 rounded-lg text-[10px] font-black">Yorumu Kaydet</button>
                     </div>
                 </div>`;
             }
@@ -1140,6 +1400,21 @@
                 <div id="detail-image-counter" class="absolute right-3 bottom-3 bg-black/60 text-white text-[10px] font-black px-2 py-1 rounded-full">${activeDetailImageIndex + 1} / ${detailImages.length}</div>
             ` : "";
             const imagesHtml = detailImages.map((img, index) => `<img src="${escapeHtml(img)}" data-detail-thumb="${index}" class="rounded-xl w-24 h-20 shrink-0 object-cover cursor-pointer border-2 ${index === activeDetailImageIndex ? 'border-orange-600' : 'border-transparent'} hover:border-orange-600" onclick="selectDetailImage(${index})">`).join('');
+            const safetyHtml = `
+                <div class="bg-yellow-50 border border-yellow-100 rounded-2xl p-4 mb-4">
+                    <div class="flex items-start gap-3">
+                        <span class="w-9 h-9 rounded-xl bg-yellow-100 text-yellow-700 flex items-center justify-center shrink-0"><i class="fa-solid fa-shield-halved"></i></span>
+                        <div>
+                            <p class="text-sm font-black text-yellow-900">Güvenli alışveriş notu</p>
+                            <div class="mt-2 grid grid-cols-1 sm:grid-cols-3 gap-2 text-[10px] font-bold text-yellow-800">
+                                <span class="bg-white/70 rounded-xl px-3 py-2"><i class="fa-solid fa-eye mr-1"></i>Ürünü görmeden ödeme yapma.</span>
+                                <span class="bg-white/70 rounded-xl px-3 py-2"><i class="fa-solid fa-comments mr-1"></i>Anlaşmayı sohbet üzerinden netleştir.</span>
+                                <span class="bg-white/70 rounded-xl px-3 py-2"><i class="fa-solid fa-flag mr-1"></i>Şüpheli durumda hemen şikayet et.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
 
             content.innerHTML = `<div class="bg-white rounded-3xl shadow-xl overflow-hidden grid grid-cols-1 md:grid-cols-2">
                 <div class="p-4 bg-gray-50 flex flex-col items-center justify-center gap-4">
@@ -1187,14 +1462,13 @@
                             </div>
                             ${renderParticipants(p, false)}
                         </div>
+                        ${safetyHtml}
                     </div>
                     <div>${actionArea}</div>
                 </div>
-            </div>
-            ${renderProductChat(p)}`;
+            </div>`;
             document.getElementById('main-page').classList.add('hidden');
             document.getElementById('detail-page').classList.remove('hidden');
-            if (appState.isAuthenticated) await loadProductMessages(p.id);
         }
 
         function getActiveDetailImages() {
@@ -1254,108 +1528,6 @@
                 showScreenNotice("İlan silindi");
             } else {
                 showScreenNotice(result.message || "İlan silinemedi", "error");
-            }
-        }
-
-        function renderChatMessages(messages, options = {}) {
-            const container = document.getElementById('product-chat-messages');
-            if (!container) return;
-
-            if (!messages.length) {
-                lastProductChatSignature = '';
-                container.innerHTML = '<p class="text-center text-xs text-gray-400 italic py-6">Bu ilanda henüz mesaj yok.</p>';
-                return;
-            }
-
-            const signature = messages.map(message => `${message.id}:${message.timestamp}`).join('|');
-            if (options.silent && signature === lastProductChatSignature) return;
-            const shouldStickToBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
-            container.innerHTML = messages.map(message => {
-                const mine = message.user_id === currentUserId;
-                const adminBadge = message.is_admin ? '<span class="ml-auto bg-red-600 text-white text-[9px] font-black px-2 py-0.5 rounded-full tracking-wide">ADMIN</span>' : '';
-                return `<div class="flex ${mine ? 'justify-end' : 'justify-start'}">
-                    <div class="${message.is_admin ? 'relative border-2 border-red-200 ' : ''}${mine ? 'bg-orange-600 text-white' : 'bg-gray-100 text-gray-700'} max-w-[82%] rounded-2xl px-4 py-3">
-                        <div class="flex items-center gap-2 mb-1">
-                            ${mine ? `<span class="text-[10px] font-black text-orange-100">${escapeHtml(message.user_name)}</span>` : `<button onclick="openUserActions(${message.user_id}, '${escapeJs(message.user_name)}')" class="text-[10px] font-black text-gray-500 hover:text-orange-600 transition">${escapeHtml(message.user_name)}</button>`}
-                            <span class="text-[10px] ${mine ? 'text-orange-100' : 'text-gray-400'}">${message.timestamp}</span>
-                            ${adminBadge}
-                            ${!mine ? `<button onclick="toggleMessageReport(${message.id})" class="text-[10px] ${mine ? 'text-orange-100' : 'text-gray-400'} hover:text-red-500"><i class="fa-solid fa-flag"></i></button>` : ''}
-                        </div>
-                        <p class="text-sm font-bold leading-snug break-words">${escapeHtml(message.message)}</p>
-                        ${!mine ? `<div id="message-report-${message.id}" class="hidden mt-2 bg-white/90 rounded-xl p-2 text-gray-700"><input id="message-report-text-${message.id}" class="w-full border rounded-lg px-2 py-1 text-[11px]" placeholder="Rapor nedeni"><button onclick="reportMessage(${message.id})" class="mt-1 bg-red-600 text-white px-2 py-1 rounded-lg text-[10px] font-black">Gönder</button></div>` : ''}
-                    </div>
-                </div>`;
-            }).join('');
-            lastProductChatSignature = signature;
-            if (!options.silent || shouldStickToBottom) {
-                container.scrollTop = container.scrollHeight;
-            }
-        }
-
-        async function loadProductMessages(productId, options = {}) {
-            const container = document.getElementById('product-chat-messages');
-            if (!container || !appState.isAuthenticated || productChatPolling) return;
-
-            productChatPolling = true;
-            try {
-                const response = await fetch(`/api/product_messages/${productId}`);
-                if (!response.ok) {
-                    if (!options.silent) container.innerHTML = '<p class="text-center text-xs text-red-500 font-bold py-6">Sohbet yüklenemedi.</p>';
-                    return;
-                }
-
-                renderChatMessages(await response.json(), options);
-            } finally {
-                productChatPolling = false;
-            }
-        }
-
-        function showChatError(message) {
-            const error = document.getElementById('product-chat-error');
-            const input = document.getElementById('product-chat-input');
-            if (error) {
-                error.textContent = message;
-                error.classList.remove('hidden');
-            }
-            if (input) {
-                input.classList.add('border-red-500', 'bg-red-50');
-                input.focus();
-            }
-        }
-
-        async function sendProductMessage(productId) {
-            const input = document.getElementById('product-chat-input');
-            const error = document.getElementById('product-chat-error');
-            if (!input) return;
-
-            if (error) error.classList.add('hidden');
-            input.classList.remove('border-red-500', 'bg-red-50');
-
-            const message = input.value.trim();
-            if (!message) {
-                showChatError('Mesaj yazmak zorundasınız.');
-                return;
-            }
-
-            const response = await fetch('/api/product_messages', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ product_id: productId, message })
-            });
-            const result = await response.json();
-
-            if (result.success) {
-                input.value = '';
-                await loadProductMessages(productId);
-            } else {
-                showChatError(result.message || 'Mesaj gönderilemedi.');
-            }
-        }
-
-        function handleChatKey(event, productId) {
-            if (event.key === 'Enter') {
-                event.preventDefault();
-                sendProductMessage(productId);
             }
         }
 
@@ -1581,24 +1753,89 @@
             countEl.classList.toggle('flex', data.unreadCount > 0);
             updateMessageBadge(data.messageUnreadCount || 0);
 
-            listEl.innerHTML = data.items.length ? data.items.map(item => `
-                <div class="flex items-stretch border-b border-gray-50 ${item.is_read ? 'opacity-70' : ''}">
+            listEl.innerHTML = renderNotificationGroups(data);
+        }
+
+        function getNotificationMeta(type) {
+            const meta = {
+                chat: { label: 'Mesajlar', icon: 'fa-comment', color: 'bg-orange-100 text-orange-600' },
+                bid: { label: 'Teklifler', icon: 'fa-gavel', color: 'bg-green-100 text-green-700' },
+                rating: { label: 'Yorumlar', icon: 'fa-star', color: 'bg-yellow-100 text-yellow-700' },
+                exchange: { label: 'Takas', icon: 'fa-right-left', color: 'bg-indigo-100 text-indigo-700' },
+                admin: { label: 'Admin', icon: 'fa-user-shield', color: 'bg-red-100 text-red-700' },
+                info: { label: 'Diğer', icon: 'fa-bell', color: 'bg-gray-100 text-gray-600' }
+            };
+            return meta[type] || meta.info;
+        }
+
+        function renderNotificationItem(item) {
+            const meta = getNotificationMeta(item.type);
+            return `
+                <div class="flex items-stretch border-b border-gray-50 last:border-b-0 ${item.is_read ? 'opacity-70' : ''}">
                     <button onclick="${item.type === 'private_message' ? 'openMessagesFromNotification()' : `openNotificationProduct(${item.product_id || 'null'})`}" class="flex-1 text-left p-4 hover:bg-orange-50 transition">
                         <div class="flex items-start gap-3">
-                            <span class="mt-1 ${item.is_read ? 'bg-gray-200 text-gray-500' : item.type === 'exchange' ? 'bg-indigo-100 text-indigo-700' : item.type === 'admin' ? 'bg-red-100 text-red-700' : 'bg-orange-100 text-orange-600'} w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid ${item.type === 'chat' ? 'fa-comment' : item.type === 'bid' ? 'fa-gavel' : item.type === 'exchange' ? 'fa-right-left' : item.type === 'admin' ? 'fa-user-shield' : 'fa-bell'} text-xs"></i></span>
-                            <span class="flex-1">
-                                <span class="block text-xs font-black text-gray-800">${escapeHtml(item.title)}</span>
-                                <span class="block text-[11px] text-gray-500 mt-1">${escapeHtml(item.message)}</span>
-                                <span class="inline-flex items-center gap-1 text-[9px] font-black text-gray-400 mt-2 uppercase">${escapeHtml(item.type || 'info')}</span>
+                            <span class="mt-1 ${item.is_read ? 'bg-gray-200 text-gray-500' : meta.color} w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid ${meta.icon} text-xs"></i></span>
+                            <span class="flex-1 min-w-0">
+                                <span class="block text-xs font-black text-gray-800 break-words">${escapeHtml(item.title)}</span>
+                                <span class="block text-[11px] text-gray-500 mt-1 break-words">${escapeHtml(item.message)}</span>
                                 <span class="block text-[10px] text-gray-400 mt-1">${item.created_at}</span>
                             </span>
                         </div>
                     </button>
-                    <button onclick="deleteNotification(event, ${item.id})" class="w-11 text-red-500 hover:bg-red-50 hover:text-red-700 transition" title="Bildirimi sil">
+                    <button onclick="deleteNotification(event, ${item.id})" class="w-11 shrink-0 text-red-500 hover:bg-red-50 hover:text-red-700 transition" title="Bildirimi sil">
                         <i class="fa-solid fa-trash-can text-xs"></i>
                     </button>
                 </div>
-            `).join('') : '<p class="p-6 text-center text-xs text-gray-400 italic">Bildirim yok.</p>';
+            `;
+        }
+
+        function renderNotificationGroups(data) {
+            const items = data.items || [];
+            const hasMessages = (data.messageUnreadCount || 0) > 0;
+            if (!items.length && !hasMessages) {
+                return renderEmptyState({
+                    icon: 'fa-bell',
+                    title: 'Bildirim yok',
+                    text: 'Teklif, takas ve admin duyuruları burada toplanacak.',
+                    compact: true
+                });
+            }
+            const groups = {};
+            items.forEach(item => {
+                const meta = getNotificationMeta(item.type);
+                if (!groups[meta.label]) groups[meta.label] = [];
+                groups[meta.label].push(item);
+            });
+            const messageSection = hasMessages ? `
+                <div>
+                    <div class="px-4 py-2 bg-gray-50 text-[10px] font-black text-gray-400 uppercase flex items-center justify-between">
+                        <span>Mesajlar</span>
+                        <span>${data.messageUnreadCount} yeni sohbet</span>
+                    </div>
+                    <button onclick="openMessagesFromNotification()" class="w-full text-left p-4 hover:bg-orange-50 transition border-b border-gray-50">
+                        <div class="flex items-center gap-3">
+                            <span class="bg-orange-100 text-orange-600 w-8 h-8 rounded-full flex items-center justify-center"><i class="fa-solid fa-comments text-xs"></i></span>
+                            <span>
+                                <span class="block text-xs font-black text-gray-800">Okunmamış sohbet mesajların var</span>
+                                <span class="block text-[11px] text-gray-500 mt-1">Sohbetleri açıp cevap verebilirsin.</span>
+                            </span>
+                        </div>
+                    </button>
+                </div>
+            ` : '';
+            const groupOrder = ['Teklifler', 'Yorumlar', 'Takas', 'Admin', 'Diğer', 'Mesajlar'];
+            const sections = groupOrder
+                .filter(label => groups[label] && groups[label].length)
+                .map(label => `
+                    <div>
+                        <div class="px-4 py-2 bg-gray-50 text-[10px] font-black text-gray-400 uppercase flex items-center justify-between">
+                            <span>${label}</span>
+                            <span>${groups[label].length}</span>
+                        </div>
+                        ${groups[label].map(renderNotificationItem).join('')}
+                    </div>
+                `).join('');
+            return messageSection + sections;
         }
 
         function updateMessageBadge(count) {
@@ -2029,6 +2266,29 @@
             `;
         }
 
+        function renderReviewList(reviews = [], emptyText = 'Henüz yorum yok.') {
+            if (!reviews.length) {
+                return `<p class="text-xs text-gray-400 italic bg-gray-50 rounded-2xl p-4 text-center">${escapeHtml(emptyText)}</p>`;
+            }
+            return `<div class="space-y-2">
+                ${reviews.map(review => `
+                    <div class="rounded-2xl border border-gray-100 bg-white p-3">
+                        <div class="flex items-start gap-3">
+                            ${review.raterImage ? `<img src="${escapeHtml(review.raterImage)}" class="h-9 w-9 rounded-xl object-cover bg-gray-100 shrink-0">` : `<span class="h-9 w-9 rounded-xl bg-yellow-100 text-yellow-700 flex items-center justify-center font-black shrink-0">${escapeHtml((review.raterName || 'K').charAt(0).toUpperCase())}</span>`}
+                            <div class="min-w-0 flex-1">
+                                <div class="flex flex-wrap items-center justify-between gap-2">
+                                    <p class="text-xs font-black text-gray-800 break-words">${escapeHtml(review.raterName)}</p>
+                                    <span class="text-yellow-500 text-[11px] font-black">${'★'.repeat(Number(review.score || 0))}${'☆'.repeat(Math.max(0, 5 - Number(review.score || 0)))}</span>
+                                </div>
+                                <p class="text-[10px] font-bold text-gray-400 mt-1 break-words">${escapeHtml(review.productTitle || '')} | ${escapeHtml(review.createdAt || '')}</p>
+                                ${review.comment ? `<p class="text-xs text-gray-600 font-bold mt-2 break-words">${escapeHtml(review.comment)}</p>` : '<p class="text-xs text-gray-400 italic mt-2">Yorum yazılmamış.</p>'}
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>`;
+        }
+
         async function openTrustDetails(userId) {
             if (!userId) return;
             const response = await fetch(`/api/users/${userId}/trust_details`);
@@ -2052,43 +2312,66 @@
             const trust = profile.user.trust || { label: 'Yeni / düşük veri', score: 0 };
             const products = profile.products || [];
             return `
-                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div class="md:col-span-1 rounded-2xl bg-gray-50 border border-gray-100 p-4">
-                        ${profile.user.profile_image ? `<img src="${escapeHtml(profile.user.profile_image)}" class="h-24 w-24 rounded-2xl object-cover bg-gray-100 mb-3">` : `<div class="h-24 w-24 rounded-2xl bg-orange-100 text-orange-600 flex items-center justify-center text-3xl font-black mb-3">${escapeHtml((profile.user.name || 'K').charAt(0).toUpperCase())}</div>`}
-                        <h3 class="text-lg font-black text-gray-800">${escapeHtml(profile.user.name)}</h3>
-                        <p class="text-[11px] text-gray-400 font-bold mt-1"><i class="fa-solid fa-location-dot mr-1"></i>${escapeHtml(profile.user.location || 'Konum yok')}</p>
-                        ${profile.user.can_view_contact ? `
-                            <div class="mt-3 space-y-1 rounded-xl bg-white border border-gray-100 p-3">
-                                <p class="text-[10px] text-gray-500 font-bold break-all"><i class="fa-solid fa-envelope mr-1 text-orange-500"></i>${escapeHtml(profile.user.email || '-')}</p>
-                                <p class="text-[10px] text-gray-500 font-bold break-words"><i class="fa-solid fa-phone mr-1 text-orange-500"></i>${escapeHtml(profile.user.phone || '-')}</p>
+                <div class="rounded-3xl bg-gray-50 border border-gray-100 overflow-hidden">
+                    <div class="p-4 sm:p-5 flex flex-col md:flex-row md:items-center gap-4">
+                        ${profile.user.profile_image ? `<img src="${escapeHtml(profile.user.profile_image)}" class="h-28 w-28 rounded-3xl object-cover bg-gray-100 border border-white shadow-sm shrink-0">` : `<div class="h-28 w-28 rounded-3xl bg-orange-100 text-orange-600 flex items-center justify-center text-4xl font-black border border-white shadow-sm shrink-0">${escapeHtml((profile.user.name || 'K').charAt(0).toUpperCase())}</div>`}
+                        <div class="min-w-0 flex-1">
+                            <p class="text-[10px] font-black text-orange-600 uppercase">Satıcı profili</p>
+                            <h3 class="text-2xl font-black text-gray-800 leading-tight break-words">${escapeHtml(profile.user.name)}</h3>
+                            <p class="text-xs text-gray-500 font-bold mt-1 break-words"><i class="fa-solid fa-location-dot mr-1 text-orange-500"></i>${escapeHtml(profile.user.location || 'Konum yok')}</p>
+                            <div class="mt-3 flex flex-wrap gap-2">
+                                <button type="button" onclick="openTrustDetails(${profile.user.id})" class="inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-[10px] font-black ${getTrustBadgeClass(trust.label)} hover:shadow-sm transition">
+                                    <i class="fa-solid fa-shield-halved"></i> Güven: ${escapeHtml(trust.label)} (${trust.score}/100)
+                                </button>
+                                ${profile.user.phone_verified ? '<span class="bg-green-100 text-green-700 border border-green-200 rounded-full px-3 py-1.5 text-[10px] font-black"><i class="fa-solid fa-phone mr-1"></i>Telefon doğrulandı</span>' : '<span class="bg-gray-100 text-gray-500 border border-gray-200 rounded-full px-3 py-1.5 text-[10px] font-black">Telefon doğrulanmadı</span>'}
+                                ${profile.user.rating && profile.user.rating.count ? `<span class="bg-yellow-100 text-yellow-700 border border-yellow-200 rounded-full px-3 py-1.5 text-[10px] font-black"><i class="fa-solid fa-star mr-1"></i>${profile.user.rating.average} / ${profile.user.rating.count} yorum</span>` : '<span class="bg-gray-100 text-gray-500 border border-gray-200 rounded-full px-3 py-1.5 text-[10px] font-black">Henüz yorum yok</span>'}
                             </div>
-                        ` : ''}
-                        <button type="button" onclick="openTrustDetails(${profile.user.id})" class="mt-3 inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[10px] font-black ${getTrustBadgeClass(trust.label)} hover:shadow-sm transition">
-                            <i class="fa-solid fa-shield-halved"></i> Güven: ${escapeHtml(trust.label)} (${trust.score}/100)
-                        </button>
-                        ${profile.user.badges && profile.user.badges.length ? `<div class="mt-3 flex flex-wrap gap-1">${profile.user.badges.map(badge => `<span class="bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-1 rounded-full text-[9px] font-black">${escapeHtml(badge.label)}</span>`).join('')}</div>` : ''}
+                        </div>
+                        <div class="grid grid-cols-3 gap-2 md:w-64 shrink-0">
+                            ${[
+                                ['Aktif', products.length],
+                                ['Toplam', profile.stats.totalProducts],
+                                ['Satış', profile.stats.completedSales]
+                            ].map(item => `
+                                <div class="rounded-2xl bg-white border border-gray-100 p-3 text-center">
+                                    <p class="text-xl font-black text-orange-600">${escapeHtml(item[1])}</p>
+                                    <p class="text-[9px] font-black text-gray-400 uppercase">${item[0]}</p>
+                                </div>
+                            `).join('')}
+                        </div>
                     </div>
-                    <div class="md:col-span-2 grid grid-cols-2 sm:grid-cols-4 gap-2">
-                        ${[
-                            ['Güven', `${trust.score}/100`],
-                            ['İlan', profile.stats.activeProducts],
-                            ['Toplam', profile.stats.totalProducts],
-                            ['Satış', profile.stats.completedSales],
-                            ['Puan', profile.user.rating && profile.user.rating.count ? profile.user.rating.average : '-'],
-                            ['Yorum', profile.stats.ratingCount],
-                            ['Doğrulama', profile.user.phone_verified ? 'Var' : 'Yok'],
-                            ['Aktif', products.length]
-                        ].map(item => `
-                            <div class="rounded-2xl bg-white border border-gray-100 p-3">
-                                <p class="text-[9px] font-black text-gray-400 uppercase">${item[0]}</p>
-                                <p class="text-lg font-black text-gray-800 mt-1">${escapeHtml(item[1])}</p>
-                            </div>
-                        `).join('')}
-                    </div>
+                    ${profile.user.can_view_contact ? `
+                        <div class="mx-4 sm:mx-5 mb-4 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                            <p class="text-[10px] text-gray-500 font-bold break-all bg-white border border-gray-100 rounded-xl p-3"><i class="fa-solid fa-envelope mr-1 text-orange-500"></i>${escapeHtml(profile.user.email || '-')}</p>
+                            <p class="text-[10px] text-gray-500 font-bold break-words bg-white border border-gray-100 rounded-xl p-3"><i class="fa-solid fa-phone mr-1 text-orange-500"></i>${escapeHtml(profile.user.phone || '-')}</p>
+                        </div>
+                    ` : ''}
+                    ${profile.user.badges && profile.user.badges.length ? `<div class="px-4 sm:px-5 pb-4 flex flex-wrap gap-1">${profile.user.badges.map(badge => `<span class="bg-indigo-50 text-indigo-700 border border-indigo-100 px-2 py-1 rounded-full text-[9px] font-black">${escapeHtml(badge.label)}</span>`).join('')}</div>` : ''}
+                </div>
+                <div class="mt-4 grid grid-cols-2 sm:grid-cols-5 gap-2">
+                    ${[
+                        ['Güven', `${trust.score}/100`],
+                        ['İlan', profile.stats.activeProducts],
+                        ['Puan', profile.user.rating && profile.user.rating.count ? profile.user.rating.average : '-'],
+                        ['Yorum', profile.stats.ratingCount],
+                        ['Doğrulama', profile.user.phone_verified ? 'Var' : 'Yok']
+                    ].map(item => `
+                        <div class="rounded-2xl bg-white border border-gray-100 p-3">
+                            <p class="text-[9px] font-black text-gray-400 uppercase">${item[0]}</p>
+                            <p class="text-lg font-black text-gray-800 mt-1">${escapeHtml(item[1])}</p>
+                        </div>
+                    `).join('')}
                 </div>
                 <div class="mt-5">
                     <div class="flex items-center justify-between mb-3">
-                        <h3 class="text-sm font-black text-gray-800">İlanları</h3>
+                        <h3 class="text-sm font-black text-gray-800">Satıcı Yorumları</h3>
+                        <span class="text-[10px] font-black text-gray-400">${(profile.reviews || []).length} yorum</span>
+                    </div>
+                    ${renderReviewList(profile.reviews || [], 'Bu satıcı henüz yorum almamış.')}
+                </div>
+                <div class="mt-5">
+                    <div class="flex items-center justify-between mb-3">
+                        <h3 class="text-sm font-black text-gray-800">Satıcının İlanları</h3>
                         <span class="text-[10px] font-black text-gray-400">${products.length} aktif ilan</span>
                     </div>
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -2270,6 +2553,13 @@
                 </div>
                 <div>
                     ${renderTrustDetailsPanel(trust, profile.user.name)}
+                </div>
+                <div class="mt-6">
+                    <div class="flex items-center justify-between mb-3">
+                        <p class="text-sm font-black text-gray-700">Bana Gelen Yorumlar</p>
+                        <span class="text-[10px] font-black text-gray-400">${(profile.reviews || []).length} yorum</span>
+                    </div>
+                    ${renderReviewList(profile.reviews || [], 'Henüz yorum almadınız.')}
                 </div>
                 <div class="mt-6">
                     <p class="text-sm font-black text-gray-700 mb-3">Engellenenler</p>
@@ -2686,7 +2976,20 @@
                 })
             });
             const result = await response.json();
-            showScreenNotice(result.success ? "Puan kaydedildi" : (result.message || "Puan kaydedilemedi"), result.success ? "success" : "error");
+            if (result.success) {
+                const product = productsData.find(item => item.id === productId);
+                if (product) {
+                    product.myRating = {
+                        score: Number(document.getElementById(`rating-score-${productId}`).value),
+                        comment: document.getElementById(`rating-comment-${productId}`).value
+                    };
+                }
+                await loadNotifications();
+                await showDetails(productId);
+                showScreenNotice("Yorum kaydedildi");
+            } else {
+                showScreenNotice(result.message || "Yorum kaydedilemedi", "error");
+            }
         }
 
         async function sendAppeal() {
@@ -2729,7 +3032,7 @@
         }
 
         function toggleSidebar() { document.getElementById('sidebar').classList.toggle('sidebar-closed'); document.getElementById('sidebar-overlay').classList.toggle('hidden'); }
-        function showMainPage() { activeDetailId = null; activeDetailImageIndex = 0; lastProductChatSignature = ''; document.getElementById('main-page').classList.remove('hidden'); document.getElementById('detail-page').classList.add('hidden'); }
+        function showMainPage() { activeDetailId = null; activeDetailImageIndex = 0; document.getElementById('main-page').classList.remove('hidden'); document.getElementById('detail-page').classList.add('hidden'); }
         function toggleModal(id) { document.getElementById(id).classList.toggle('hidden'); }
         function openListingModal() { toggleModal(appState.isAuthenticated ? 'modal-ilan' : 'modal-login'); }
         function getRemainingTime(et) {
@@ -2740,7 +3043,13 @@
             const minutes = Math.floor((d % 3600000) / 60000);
             return `${days} gün ${hours} saat ${minutes} dakika`;
         }
-        function handleSearch() { const q = document.getElementById('search-input').value.toLowerCase(); currentViewMode = q ? { type: 'search', value: q } : { type: 'all' }; renderCurrentView(); }
+        function handleSearch() {
+            const q = document.getElementById('search-input').value.trim();
+            currentViewMode = q ? { type: 'search', value: q } : { type: 'all' };
+            document.getElementById('current-category-title').innerText = q ? `Arama: ${q}` : 'Tüm İlanlar';
+            activeSearchSuggestionIndex = -1;
+            renderCurrentView();
+        }
         
         function sortProducts(t) { 
             currentSortType = t;
@@ -2807,23 +3116,95 @@
             preview.innerHTML = "";
 
             inputs.forEach((input, index) => {
+                const slot = document.getElementById(`upload-slot-preview-${index + 1}`);
+                if (slot) {
+                    slot.innerHTML = `
+                        <i class="fa-solid fa-plus text-xl"></i>
+                    `;
+                    slot.className = 'absolute inset-0 flex flex-col items-center justify-center text-gray-400 group-hover:text-orange-600';
+                }
                 const file = input.files[0];
                 if (!file) return;
                 const url = URL.createObjectURL(file);
+                if (slot) {
+                    slot.className = 'absolute inset-0 block';
+                    slot.innerHTML = `
+                        <img src="${url}" class="w-full h-full object-cover">
+                        <button type="button" onclick="clearImageInput(event, '${input.id}')" class="absolute right-1 top-1 bg-black/70 hover:bg-black text-white w-5 h-5 rounded-full text-[10px] transition"><i class="fa-solid fa-xmark"></i></button>
+                    `;
+                }
                 preview.insertAdjacentHTML('beforeend', `
                     <div class="relative rounded-xl overflow-hidden border border-gray-100">
                         <img src="${url}" class="w-full h-16 object-cover">
-                        <button type="button" onclick="clearImageInput('${input.id}')" class="absolute right-1 top-1 bg-black/70 text-white w-5 h-5 rounded-full text-[10px]"><i class="fa-solid fa-xmark"></i></button>
-                        <span class="absolute left-1 bottom-1 bg-black/70 text-white text-[9px] px-1 rounded">${index === 0 ? 'Kapak' : index + 1}</span>
+                        <button type="button" onclick="clearImageInput(event, '${input.id}')" class="absolute right-1 top-1 bg-black/70 text-white w-5 h-5 rounded-full text-[10px]"><i class="fa-solid fa-xmark"></i></button>
                     </div>
                 `);
             });
         }
 
-        function clearImageInput(inputId) {
+        function clearImageInput(event, inputId) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
             const input = document.getElementById(inputId);
             if (input) input.value = "";
             renderImagePreviews();
+        }
+
+        function getSelectedListingFiles() {
+            return Array.from(document.querySelectorAll('.new-img-input')).map(input => input.files[0]).filter(Boolean);
+        }
+
+        function showListingPreview() {
+            const category = document.getElementById('new-cat').value;
+            const brand = document.getElementById('new-brand').value;
+            const title = document.getElementById('new-title').value.trim();
+            const desc = document.getElementById('new-desc').value.trim();
+            const condition = document.getElementById('new-condition').value;
+            const exchangeOpen = document.getElementById('exchange-open').checked;
+            const price = Number(document.getElementById('new-price').value || 0);
+            const duration = Number(normalizeListingDuration(document.getElementById('new-duration-days').value));
+            const files = getSelectedListingFiles();
+            const imageUrl = files[0] ? URL.createObjectURL(files[0]) : '';
+            const preview = document.getElementById('listing-preview-content');
+            const fullTitle = [brand, title || 'Ürün başlığı'].filter(Boolean).join(' | ');
+            const endTime = Date.now() + duration * 86400000;
+
+            preview.innerHTML = `
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="rounded-2xl bg-gray-50 border border-gray-100 p-4">
+                        ${imageUrl ? `<img src="${imageUrl}" class="w-full h-64 object-contain rounded-2xl bg-white">` : `
+                            <div class="w-full h-64 rounded-2xl bg-white border border-dashed border-gray-200 flex flex-col items-center justify-center text-gray-400">
+                                <i class="fa-solid fa-image text-3xl"></i>
+                                <p class="text-xs font-bold mt-2">Fotoğraf seçilmedi</p>
+                            </div>
+                        `}
+                        ${files.length > 1 ? `<p class="mt-2 text-[10px] font-black text-gray-400">${files.length} fotoğraf seçildi</p>` : ''}
+                    </div>
+                    <div class="rounded-2xl bg-white border border-gray-100 p-4">
+                        <div class="flex flex-wrap gap-2 mb-3">
+                            <span class="bg-orange-100 text-orange-700 px-3 py-1 rounded-full text-[10px] font-black">${escapeHtml(category || 'Kategori')}</span>
+                            ${condition ? `<span class="bg-indigo-50 text-indigo-700 px-3 py-1 rounded-full text-[10px] font-black">${escapeHtml(condition)}</span>` : ''}
+                            ${exchangeOpen ? '<span class="bg-orange-50 text-orange-700 border border-orange-100 px-3 py-1 rounded-full text-[10px] font-black lowercase">Takasa açık</span>' : ''}
+                        </div>
+                        <h3 class="text-2xl font-black text-gray-800 break-words">${escapeHtml(fullTitle)}</h3>
+                        <p class="mt-3 text-sm text-gray-500 whitespace-pre-wrap break-words">${escapeHtml(desc || 'Açıklama yok.')}</p>
+                        <div class="mt-4 rounded-2xl bg-gray-50 p-4">
+                            <p class="text-[10px] font-black text-gray-400 uppercase">Başlangıç Fiyatı</p>
+                            <p class="text-2xl font-black text-orange-600">${Number(price || 0).toLocaleString()} ₺</p>
+                            <p class="mt-2 text-[10px] font-bold text-gray-400"><i class="fa-solid fa-clock mr-1"></i>${getRemainingTime(endTime)}</p>
+                        </div>
+                        <div class="mt-4 flex gap-2">
+                            <button onclick="toggleModal('modal-listing-preview')" class="flex-1 bg-gray-100 hover:bg-gray-200 text-gray-700 py-3 rounded-xl text-xs font-black transition">Düzenle</button>
+                            <button onclick="toggleModal('modal-listing-preview'); addListing()" class="flex-1 bg-orange-600 hover:bg-orange-700 text-white py-3 rounded-xl text-xs font-black transition">Yayınla</button>
+                        </div>
+                    </div>
+                </div>
+            `;
+            if (document.getElementById('modal-listing-preview').classList.contains('hidden')) {
+                toggleModal('modal-listing-preview');
+            }
         }
 
         function readImageFile(file) {
@@ -2899,7 +3280,7 @@
             if (!conditionInput.value) { showScreenNotice("Ürün durumunu seçmelisiniz", "error"); conditionInput.focus(); return; }
 
             const imageInputs = Array.from(document.querySelectorAll('.new-img-input'));
-            const selectedFiles = imageInputs.map(input => input.files[0]).filter(Boolean);
+            const selectedFiles = getSelectedListingFiles();
             if (selectedFiles.length === 0) { showScreenNotice("En az bir fotoğraf eklemelisiniz", "error"); document.getElementById('img-1').focus(); return; }
             if (selectedFiles.length > siteSettings.max_images) { showScreenNotice(`En fazla ${siteSettings.max_images} fotoğraf ekleyebilirsiniz`, "error"); return; }
 
