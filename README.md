@@ -1,2 +1,2 @@
-# satiyorumsattim
-satıyorumsattım
+# verteklifi
+verteklifi
